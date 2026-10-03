@@ -1,18 +1,35 @@
 # Affidavit
 
-**Visual-only QA for web apps.** You write a flow in the words a user sees on
-screen. A real browser performs it by finding things the way a person would.
-A reviewer model that has seen nothing but the screenshots testifies to what
-they show, step by step.
+**Your coding agent says it works. Affidavit shows you.**
 
-Nothing in the QA path reads your code, database or network traffic. If a
-person could not see it, Affidavit cannot claim it.
+Coding agents are fast at building and quick to report success they never
+saw — "done, tested, works" — when the screen says otherwise. A human can
+check one or two screens. Not hundreds.
+
+Affidavit is the independent witness. Your agent writes each flow in the
+words a user sees on screen. A real browser performs it against your running
+app. A reviewer that has never seen your code testifies to what each
+screenshot shows — and every verdict comes with the picture to prove it.
+
+You stop doing the checking. You review the evidence.
 
 ```
 spec (*.qa.md) ──► browser ──► screenshot per step ──► reviewer ──► report + ledger
  words on screen    finds by       what a person         sees only the
  + expectations     visible text   would have seen       spec + pictures
 ```
+
+## Where it fits
+
+Affidavit is black-box QA from the user's side of the screen: it drives the
+running app, but never looks inside it. Nothing in the QA path reads your code,
+DOM, database or network traffic. If a person could not see it, Affidavit
+cannot claim it.
+
+It does not replace unit tests or classic end-to-end suites. Keep those for
+logic and fast CI. Affidavit covers what they miss: UX flows, layouts across
+screen sizes, who can see what, and whether the work your agent reported as
+done actually shows up.
 
 ## Why it holds up
 
