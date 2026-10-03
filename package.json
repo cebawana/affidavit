@@ -43,5 +43,7 @@
   "dependencies": {
     "playwright-core": "^1.63.0"
   },
-  "private": true
+  "publishConfig": {
+    "access": "public"
+  }
 }

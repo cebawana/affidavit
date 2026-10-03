@@ -86,12 +86,16 @@ async function main() {
     }
     case 'check': {
       const config = project()
-      const files = flags._.length ? flags._.map(a => resolveSpecArg(a, config)) : allSpecs(config)
+      const files = flags._.length ? flags._.map(a => resolveSpecArg(a, config)) : allSpecs(config, { templates: true })
+      if (!files.length) {
+        console.log(`No specs in ${relative(process.cwd(), config.specsDir) || '.'} yet. Run "npx affidavit init" for an example, or add a <name>.qa.md file.`)
+        return 0
+      }
       let bad = 0
       for (const file of files) {
         try {
           const spec = loadSpec(file, config)
-          console.log(`  ✓ ${relative(config.root, file)}  [${spec.mode}, ${spec.role}, ${spec.viewportSize.name}, ${spec.steps.length} steps]`)
+          console.log(`  ✓ ${relative(config.root, file)}  [${spec.mode}, ${spec.role}, ${spec.viewportSize.name}, ${spec.steps.length} step${spec.steps.length === 1 ? "" : "s"}]`)
         } catch (err) {
           bad++
           console.log(`  ✗ ${err.message}`)
@@ -103,7 +107,11 @@ async function main() {
     case 'run': {
       const config = project()
       const files = flags.all ? allSpecs(config) : flags._.map(a => resolveSpecArg(a, config))
-      if (!files.length) throw new Error('Name a spec (path or id), or pass --all')
+      if (!files.length) {
+        throw new Error(flags.all
+          ? `No specs to run in ${relative(process.cwd(), config.specsDir) || '.'}. Files starting with "_" are templates and are skipped: copy one to a new name to make it a spec.`
+          : 'Name a spec (path or id), or pass --all')
+      }
       const base = flags.base ?? config.baseUrl
       assertLocalBase(base, config.allowRemote)
       const results = await runMany(files, config, {

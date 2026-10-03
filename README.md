@@ -32,7 +32,7 @@ Needs Node 20+, Google Chrome, and (for the default reviewer) the
 [Claude Code](https://claude.com/claude-code) CLI signed in.
 
 ```bash
-npm i -D github:cebawana/affidavit
+npm i -D affidavit                  # or straight from GitHub: npm i -D github:cebawana/affidavit
 npx affidavit init                  # config, example spec, env template, Claude Code skill
 cp .env.qa.example .env.qa.local    # fill in test accounts
 npx affidavit doctor                # browser, reviewer, roles, server
@@ -155,9 +155,8 @@ a pass. If your `.gitignore` excludes `.claude/`, init tells you how to let
 
 ## Status
 
-v0.1, early. Planned: reusing the browser session per role between runs, more
-framework presets, Codex / local-model backends, a Claude Code plugin package,
-and a public npm release.
+v0.1, early, [on npm](https://www.npmjs.com/package/affidavit). Planned: reusing the
+browser session per role between runs, more framework presets, Codex / local-model backends, and a Claude Code plugin package.
 
 ## Contributing
 

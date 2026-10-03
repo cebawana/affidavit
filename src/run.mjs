@@ -14,11 +14,14 @@ const stamp = d => d.toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T'
 // No 0/o, 1/l/i: the reviewer reads this id off a screenshot.
 const newRunId = () => Array.from({ length: 5 }, () => 'abcdefghjkmnpqrstuvwxyz23456789'[Math.floor(Math.random() * 31)]).join('')
 
-/** Every spec file in the specs folder. Files starting with "_" are templates and are skipped. */
-export function allSpecs(config) {
+/**
+ * Every spec file in the specs folder. Files starting with "_" are templates:
+ * skipped by `run --all` and the ledger, but still validated by `check`.
+ */
+export function allSpecs(config, { templates = false } = {}) {
   if (!existsSync(config.specsDir)) return []
   return readdirSync(config.specsDir)
-    .filter(f => f.endsWith('.qa.md') && !f.startsWith('_'))
+    .filter(f => f.endsWith('.qa.md') && (templates || !f.startsWith('_')))
     .sort()
     .map(f => join(config.specsDir, f))
 }
