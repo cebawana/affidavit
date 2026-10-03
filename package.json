@@ -3,6 +3,27 @@
   "version": "0.1.0",
   "description": "Visual-only QA for web apps: specs in on-screen language, a browser that finds things by what it can see, and a reviewer that testifies only to the screenshots.",
   "license": "MIT",
+  "author": "Cris Bawana",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cebawana/affidavit.git"
+  },
+  "homepage": "https://github.com/cebawana/affidavit#readme",
+  "bugs": {
+    "url": "https://github.com/cebawana/affidavit/issues"
+  },
+  "keywords": [
+    "qa",
+    "testing",
+    "e2e",
+    "visual-testing",
+    "playwright",
+    "ai",
+    "llm",
+    "claude",
+    "screenshots",
+    "cli"
+  ],
   "type": "module",
   "bin": {
     "affidavit": "bin/affidavit.mjs"

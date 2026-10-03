@@ -159,6 +159,10 @@ v0.1, early. Planned: reusing the browser session per role between runs, more
 framework presets, Codex / local-model backends, a Claude Code plugin package,
 and a public npm release.
 
+## Contributing
+
+Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 [MIT](LICENSE) © 2026 Cris Bawana
