@@ -1,0 +1,26 @@
+{
+  "name": "affidavit",
+  "version": "0.1.0",
+  "description": "Visual-only QA for web apps: specs in on-screen language, a browser that finds things by what it can see, and a reviewer that testifies only to the screenshots.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "affidavit": "bin/affidavit.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "templates",
+    "skills"
+  ],
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "playwright-core": "^1.63.0"
+  },
+  "private": true
+}
