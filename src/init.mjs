@@ -42,10 +42,31 @@ export function detectPort(root) {
   for (const name of ['vite.config.ts', 'vite.config.js', 'vite.config.mts', 'vite.config.mjs']) {
     const path = join(root, name)
     if (!existsSync(path)) continue
-    const m = readFileSync(path, 'utf8').match(/\bport\s*:\s*(\d{2,5})\b/)
-    if (m) return Number(m[1])
+    const port = viteServerPort(readFileSync(path, 'utf8'))
+    if (port) return port
   }
   return null
+}
+
+/**
+ * `server.port` from a Vite config's source, or null. Only the `server`
+ * block's own `port` counts: `server.hmr.port` and a `preview.port` are
+ * different things, so nested blocks are blanked out before looking.
+ */
+export function viteServerPort(source) {
+  const start = source.search(/\bserver\s*:\s*\{/)
+  if (start < 0) return null
+  const open = source.indexOf('{', start)
+  let depth = 0
+  let own = ''
+  for (let i = open; i < source.length; i++) {
+    const ch = source[i]
+    if (ch === '{') depth++
+    else if (ch === '}') { depth--; if (depth === 0) break }
+    else if (depth === 1) own += ch
+  }
+  const m = own.match(/\bport\s*:\s*(\d{2,5})\b/)
+  return m ? Number(m[1]) : null
 }
 
 function gitignored(root, path) {

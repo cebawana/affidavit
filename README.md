@@ -61,6 +61,10 @@ That is the whole setup for an app without a sign-in: no credentials, no
 `.env` file. `init` picks `baseUrl` from the framework (Vite 5173, Next 3000,
 or the port the dev script states); `--base-url <url>` overrides it.
 
+Scripts and coding agents have no terminal to answer in, so `init` without
+`--no-auth` sets up the sign-in form: pass `--no-auth` whenever the app has no
+sign-in.
+
 If the app has a login screen, run `npx affidavit init` instead (it asks), then
 `cp .env.qa.example .env.qa.local`, fill in the test accounts, and set `auth`
 in `affidavit.config.json` to the labels on your login screen.
@@ -129,7 +133,8 @@ the UI did not show the way.
 
 Files starting with `_` are skipped by `run --all`. Name the file after the
 `id` (`invoice-send.qa.md`) so `run invoice-send` finds it; `check` warns when
-they differ.
+they differ. Extra front-matter keys (`tags:`, `owner:`) are kept and ignored
+with a warning; a near miss of a known key (`rol:`) is an error.
 
 **No sign-in?** Use `role: none`, or set `"defaultRole": "none"` in the config
 and leave `role` out. With `"auth": {"type": "none"}` credentials are never

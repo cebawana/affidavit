@@ -11,6 +11,11 @@ screenshots testifies to what they show. Nothing in the QA path reads the code,
 the database or the network. The project's settings are in
 `affidavit.config.json` (base URL, sign-in screen, roles, screen sizes).
 
+Setting a project up for the first time? Run `npx affidavit init --no-auth`
+when the app has no sign-in, or `npx affidavit init` when it has a login
+screen. Without `--no-auth`, `init` assumes a login screen, because you cannot
+answer its question from a script.
+
 ## When you build or change a user-facing flow
 
 1. **Write the spec from the requirement first**, before reading your own

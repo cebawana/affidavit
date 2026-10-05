@@ -126,7 +126,7 @@ test('the verdict is computed, never taken from the model', () => {
 import { credentialsFor } from '../src/env.mjs'
 import { suggestAction } from '../src/spec.mjs'
 import { PRESETS } from '../src/presets.mjs'
-import { detectPort, init, pageTitle, rolesCheck, serverDetail } from '../src/init.mjs'
+import { detectPort, init, pageTitle, rolesCheck, serverDetail, viteServerPort } from '../src/init.mjs'
 import { existsSync, readFileSync } from 'node:fs'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'affidavit-test-'))
@@ -147,7 +147,7 @@ test('defaultRole fills a missing role; without it role is required', () => {
 
 test('front matter typos get a hint', () => {
   assert.throws(() => parseSpec(SPEC.replace('role: admin', 'rol: admin'), 'demo'), /unknown key "rol" — did you mean "role:"/)
-  assert.throws(() => parseSpec(SPEC.replace('role: admin', 'role: admin\nauthor: me'), 'demo'), /unknown key "author" \(known: id, title, role/)
+  assert.match(parseSpec(SPEC.replace("role: admin", "role: admin\nauthor: me"), "demo").warnings[0], /key "author" is not one Affidavit reads/)
 })
 
 test('an id that differs from the file name is a warning, not an error', () => {
@@ -242,4 +242,18 @@ test('doctor shows what answered', () => {
   assert.equal(serverDetail('http://localhost:5173', 'http://localhost:5173/', 'Portfolio'), 'http://localhost:5173 → "Portfolio"')
   assert.equal(serverDetail('http://localhost:3000', 'http://localhost:3000/login?next=%2F', 'Other App'), 'http://localhost:3000 → /login?next=%2F "Other App"')
   assert.equal(serverDetail('http://localhost:3000', 'https://accounts.example.com/sso', null), 'http://localhost:3000 → https://accounts.example.com/sso (no page title)')
+})
+
+test('an unrelated front-matter key is kept with a warning; a typo is an error', () => {
+  const spec = parseSpec(SPEC.replace('role: admin', 'role: admin\ngrandmap: finance'), 'demo')
+  assert.equal(spec.grandmap, 'finance')
+  assert.match(spec.warnings[0], /key "grandmap" is not one Affidavit reads/)
+  assert.throws(() => parseSpec(SPEC.replace('viewport: phone', 'viewprot: phone'), 'demo'), /did you mean "viewport:"/)
+})
+
+test('vite server.port is read from the server block only', () => {
+  assert.equal(viteServerPort('export default { server: { hmr: { port: 24678 }, port: 4000 } }'), 4000)
+  assert.equal(viteServerPort('export default { server: { hmr: { port: 24678 } } }'), null)
+  assert.equal(viteServerPort('export default { preview: { port: 4173 } }'), null)
+  assert.equal(viteServerPort('export default defineConfig({\n  server: {\n    port: 5180,\n    open: true,\n  },\n})'), 5180)
 })

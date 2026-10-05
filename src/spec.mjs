@@ -83,9 +83,12 @@ export function parseSpec(text, file = 'spec', options = {}) {
     const m = line.match(/^(\w+):\s*(.*)$/)
     if (!m) continue
     if (!FRONT_MATTER_KEYS.includes(m[1])) {
+      // A near miss of a key we know is a typo, and with `defaultRole` set a
+      // typo like `rol:` would otherwise fall back silently. Anything else is
+      // a project's own metadata (`tags:`, `owner:`) and stays allowed.
       const hint = closest(m[1], FRONT_MATTER_KEYS)
-      errors.push(`front matter: unknown key "${m[1]}"${hint ? ` — did you mean "${hint}:"?` : ` (known: ${FRONT_MATTER_KEYS.join(', ')})`}`)
-      continue
+      if (hint) errors.push(`front matter: unknown key "${m[1]}" — did you mean "${hint}:"?`)
+      else warnings.push(`front matter: key "${m[1]}" is not one Affidavit reads (${FRONT_MATTER_KEYS.join(', ')}); it is kept as is`)
     }
     meta[m[1]] = m[2].trim()
   }
