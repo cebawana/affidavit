@@ -21,7 +21,10 @@ the database or the network. The project's settings are in
    permission names; `npx affidavit check` rejects them. Look at the running
    app (or a screenshot) to get labels exactly right.
 3. **Cover the roles.** One spec per role that sees the flow differently, and
-   put what a role must *not* see under `## Failure signals`.
+   put what a role must *not* see under `## Failure signals`. For a page that
+   needs no sign-in use `role: none`. If the app has no sign-in at all
+   (`"auth": {"type": "none"}` in the config), every spec is `role: none`;
+   `defaultRole` in the config lets you leave `role` out.
 4. **Make persistence visible.** After a write, `reload` and expect the data to
    still be on screen. After a navigation, `wait for` something the next screen
    must show, or the screenshot may catch a loading state.
@@ -38,9 +41,9 @@ the database or the network. The project's settings are in
 
 ```markdown
 ---
-id: invoice-send                # unique, kebab-case
+id: invoice-send                # unique, kebab-case, same as the file name
 title: Send an invoice to a client
-role: admin                     # a role with <PREFIX><ROLE>_EMAIL/_PASSWORD, or "none"
+role: admin                     # a role with <PREFIX><ROLE>_EMAIL/_PASSWORD, or "none" (no sign-in)
 viewport: phone                 # desktop · phone · tablet · 390x844
 start: /invoices                # optional; opened right after sign-in
 ---
@@ -84,14 +87,17 @@ For an icon-only button, target the name its tooltip or screen reader gives it
 ## Run it and read the evidence
 
 ```bash
-npx affidavit check                    # parse every spec, no browser
+npx affidavit doctor                   # browser, reviewer, roles, and which app answers at baseUrl
+npx affidavit check                    # parse every spec, no browser; unreadable lines get a "did you mean"
+
 npx affidavit run <id-or-path>         # one spec
 npx affidavit run --all                # every spec
 npx affidavit run <id> --no-review     # screenshots only, while iterating
 npx affidavit ledger                   # one page: every spec, latest result, history
 ```
 
-The app's server must be running. Each run writes
+The app's server must be running; `doctor` shows the title of the page at
+`baseUrl`, so check it is *this* app. Each run writes
 `<runs>/<time>-<id>/report.html`, `result.json` and one `step-NN.png` per step.
 **Open the screenshots yourself.** The report is the evidence, and the
 reviewer can be wrong.

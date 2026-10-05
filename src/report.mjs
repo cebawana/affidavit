@@ -74,7 +74,7 @@ a{color:var(--accent)}details{margin-top:28px}pre{white-space:pre-wrap;backgroun
 <div class="hero">
   <div class="grow">
     <h1>${esc(spec.title)}</h1>
-    <div class="meta">${esc(spec.mode === 'explore' ? 'Explored from a goal' : 'Scripted')} · signed in as <b>${esc(spec.role)}</b> · ${esc(vp.name)} ${vp.width}×${vp.height} · ${esc(startedAt)} · <code>${esc(base)}</code> · run <code>${esc(runId)}</code></div>
+    <div class="meta">${esc(spec.mode === 'explore' ? 'Explored from a goal' : 'Scripted')} · ${spec.signedIn ? `signed in as <b>${esc(spec.role)}</b>` : spec.role && spec.role !== 'none' ? `not signed in, as <b>${esc(spec.role)}</b>` : 'not signed in'} · ${esc(vp.name)} ${vp.width}×${vp.height} · ${esc(startedAt)} · <code>${esc(base)}</code> · run <code>${esc(runId)}</code></div>
     ${spec.goal ? `<p>${esc(spec.goal)}</p>` : ''}
     ${verdict?.summary ? `<p><b>Reviewer:</b> ${esc(verdict.summary)}</p>` : ''}
     ${spec.mode === 'explore' ? `<p class="mute">Explorer ${outcome?.done ? `finished: ${esc(outcome.summary)}` : `did not finish: ${esc(outcome?.reason)}`}</p>` : ''}

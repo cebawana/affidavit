@@ -18,8 +18,13 @@ export const DEFAULTS = {
   browser: { channel: 'chrome' },
   viewports: { desktop: '1440x900', phone: '390x844', tablet: '820x1180' },
   defaultViewport: 'desktop',
+  // A spec without `role:` uses this. Left unset, every spec must name its
+  // role, so a spec in an app with a login cannot silently run signed out.
+  defaultRole: null,
   preset: 'none',
   auth: {
+    // "form": sign in through the login screen. "none": the app has no
+    // sign-in; credentials are never looked up and `role` is only a label.
     type: 'form',
     loginPath: '/login',
     fields: { email: 'Email', password: 'Password' },

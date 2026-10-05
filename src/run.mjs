@@ -36,7 +36,7 @@ export function resolveSpecArg(arg, config) {
 }
 
 export function loadSpec(file, config) {
-  const spec = parseSpec(readFileSync(file, 'utf8'), relative(config.root, file), { leakTerms: config.leakTerms })
+  const spec = parseSpec(readFileSync(file, 'utf8'), relative(config.root, file), { leakTerms: config.leakTerms, defaultRole: config.defaultRole })
   spec.viewportSize = resolveViewport(spec.viewport, config)
   return spec
 }
@@ -50,7 +50,10 @@ export async function runSpec(file, config, opts, log = console.log) {
   mkdirSync(dir, { recursive: true })
   log(`\n▶ ${spec.title}  [${spec.mode}, as ${spec.role}, ${spec.viewportSize.name}]  run ${runId}`)
 
-  const creds = credentialsFor(spec.role, config.envPrefix)
+  const creds = credentialsFor(spec.role, config.envPrefix, config.auth)
+  // Without credentials the role is only a label: the reviewer and the report
+  // must not claim anyone signed in.
+  spec.signedIn = Boolean(creds)
   const ctx = { base: opts.base, timeouts: config.timeouts, notFoundText: config.notFoundText, auth: config.auth }
   const { browser, page } = await openBrowser({
     viewport: spec.viewportSize, headed: opts.headed, locale: config.locale, channel: config.browser.channel, hide: config.hide,
