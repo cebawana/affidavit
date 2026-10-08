@@ -251,6 +251,26 @@ test('an unrelated front-matter key is kept with a warning; a typo is an error',
   assert.throws(() => parseSpec(SPEC.replace('viewport: phone', 'viewprot: phone'), 'demo'), /did you mean "viewport:"/)
 })
 
+test('the typo check scales with key length, so short metadata keys are warnings', () => {
+  const cases = [
+    ['rol: admin', 'role'],        // one edit: a typo at any length
+    ['viewprot: phone', 'viewport'], // two edits in an 8-letter key: a typo
+    ['state: draft', null],        // two edits from `start`, but only 5 letters
+    ['pr: 12', null],              // two edits from `id`
+    ['ui: v2', null],              // two edits from `id`
+    ['mode: fast', null],          // two edits from `role`
+  ]
+  for (const [line, typoOf] of cases) {
+    const text = SPEC.replace('role: admin', `role: admin\n${line}`)
+    if (typoOf) {
+      assert.throws(() => parseSpec(text, 'demo'), new RegExp(`unknown key "${line.split(':')[0]}" — did you mean "${typoOf}:"`), line)
+    } else {
+      const spec = parseSpec(text, 'demo')
+      assert.match(spec.warnings.join('\n'), new RegExp(`key "${line.split(':')[0]}" is not one Affidavit reads`), line)
+    }
+  }
+})
+
 test('vite server.port is read from the server block only', () => {
   assert.equal(viteServerPort('export default { server: { hmr: { port: 24678 }, port: 4000 } }'), 4000)
   assert.equal(viteServerPort('export default { server: { hmr: { port: 24678 } } }'), null)

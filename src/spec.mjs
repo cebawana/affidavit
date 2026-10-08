@@ -86,7 +86,10 @@ export function parseSpec(text, file = 'spec', options = {}) {
       // A near miss of a key we know is a typo, and with `defaultRole` set a
       // typo like `rol:` would otherwise fall back silently. Anything else is
       // a project's own metadata (`tags:`, `owner:`) and stays allowed.
-      const hint = closest(m[1], FRONT_MATTER_KEYS)
+      // Two edits is a lot for a short word: `pr`, `ui`, `mode` and `state`
+      // are ordinary metadata, not typos of `id`, `role` and `start`. One
+      // edit always counts; two only for keys long enough to absorb them.
+      const hint = closest(m[1], FRONT_MATTER_KEYS, m[1].length >= 6 ? 2 : 1)
       if (hint) errors.push(`front matter: unknown key "${m[1]}" — did you mean "${hint}:"?`)
       else warnings.push(`front matter: key "${m[1]}" is not one Affidavit reads (${FRONT_MATTER_KEYS.join(', ')}); it is kept as is`)
     }
