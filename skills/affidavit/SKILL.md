@@ -98,8 +98,15 @@ npx affidavit check                    # parse every spec, no browser; unreadabl
 npx affidavit run <id-or-path>         # one spec
 npx affidavit run --all                # every spec
 npx affidavit run <id> --no-review     # screenshots only, while iterating
+npx affidavit review --unreviewed      # review runs left without a verdict (rate limit, --no-review)
 npx affidavit ledger                   # one page: every spec, latest result, history
 ```
+
+Reviews run alongside the browser, so a suite takes about as long as its
+browser time. A rate limit from the reviewer is never a verdict: the run is
+recorded as `not_reviewed` with the reason, and `review --unreviewed` finishes
+it. Signing in is saved per role between specs; the browser notices an expired
+session by seeing the sign-in screen and signs in again.
 
 The app's server must be running; `doctor` shows the title of the page at
 `baseUrl`, so check it is *this* app. Each run writes
@@ -115,6 +122,9 @@ reviewer can be wrong.
   which.
 - `needs_human`: something was `unclear` (a toast that faded, content below the
   fold). Say which step and why.
+- `not_reviewed`: the screenshots exist but no reviewer judged them (rate limit,
+  timeout, or `--no-review`). Run `npx affidavit review --unreviewed`; it is
+  not a result either way.
 
 Report the result, the report path, and every defect with the step it appeared
 in. Do not describe a flow as working when its QA run did not pass. When asked

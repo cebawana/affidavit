@@ -16,6 +16,8 @@ import { join } from 'node:path'
 
 const TIMEOUT_MS = 10 * 60 * 1000
 export const DEFAULT_MODEL = 'sonnet'
+// Two `claude -p` processes at once is comfortable on a plan; more mostly waits on its limits.
+export const DEFAULT_CONCURRENCY = 2
 
 export async function chat({ model, system, content }) {
   const dir = mkdtempSync(join(tmpdir(), 'affidavit-'))

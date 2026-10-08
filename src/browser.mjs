@@ -8,9 +8,16 @@ import { chromium } from 'playwright-core'
 const CLICK_ROLES = ['button', 'link', 'tab', 'menuitem', 'option', 'checkbox', 'radio', 'switch', 'combobox']
 const CONTROL = 'input:not([type=hidden]):not([type=checkbox]):not([type=radio]), textarea, select'
 
-export async function openBrowser({ viewport, headed, locale, channel, hide }) {
+/**
+ * @param {{ storageState?: string }} [options.storageState] a saved session
+ *   (cookies and storage) to start from, so the role is already signed in.
+ */
+export async function openBrowser({ viewport, headed, locale, channel, hide, storageState }) {
   const browser = await chromium.launch({ channel: channel || undefined, headless: !headed })
-  const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height }, locale, deviceScaleFactor: 1 })
+  const context = await browser.newContext({
+    viewport: { width: viewport.width, height: viewport.height }, locale, deviceScaleFactor: 1,
+    storageState: storageState || undefined,
+  })
   // Dev-only overlays (a framework's badge) sit over the app's own UI in every
   // screenshot, and the reviewer rightly reports them as overlapping text.
   if (hide?.length) {
@@ -210,6 +217,25 @@ export async function perform(page, ctx, action) {
   } catch (err) {
     return { ok: false, note: `The action failed: ${String(err.message ?? err).split('\n')[0]}` }
   }
+}
+
+/**
+ * Whether the sign-in screen is showing — judged the way a person would, by
+ * the text on it (the field label that `doneWhenGone` waits for). A saved
+ * session that lands here has expired. A client-side redirect to the login
+ * page can take a moment, so this looks for a short while before saying no:
+ * about a second per spec, against the sign-in it saves.
+ */
+export async function loginFormVisible(page, auth, wait = 1000) {
+  if (auth?.type !== 'form') return false
+  const marker = auth.doneWhenGone || auth.fields?.email
+  if (!marker) return false
+  return Boolean(await poll(async () => {
+    for (const loc of [page.getByText(marker), page.getByLabel(marker), page.getByPlaceholder(marker)]) {
+      if (await loc.filter({ visible: true }).count()) return true
+    }
+    return null
+  }, wait))
 }
 
 /**

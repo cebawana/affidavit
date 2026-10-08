@@ -1,8 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { bindVariables, parseAction, parseSpec, toSpecMarkdown } from '../src/spec.mjs'
 import { DEFAULTS, loadConfig, resolveViewport } from '../src/config.mjs'
 import { overall } from '../src/reviewer.mjs'
@@ -276,4 +276,270 @@ test('vite server.port is read from the server block only', () => {
   assert.equal(viteServerPort('export default { server: { hmr: { port: 24678 } } }'), null)
   assert.equal(viteServerPort('export default { preview: { port: 4173 } }'), null)
   assert.equal(viteServerPort('export default defineConfig({\n  server: {\n    port: 5180,\n    open: true,\n  },\n})'), 5180)
+})
+
+// --- Review pipeline (#29) and saved sessions (#16) ---
+
+import { createQueue, isRateLimit, withRetry } from '../src/queue.mjs'
+import { concurrencyFor } from '../src/backends/index.mjs'
+import { RESULT_FORMAT, collectRuns, loadRun, resolveRunArg, reviewRun, reviewRuns, runMany, selectRuns, writeRun } from '../src/run.mjs'
+import { sessionFor, sessionPath } from '../src/session.mjs'
+import { loginFormVisible } from '../src/browser.mjs'
+
+const tick = (ms = 5) => new Promise(r => setTimeout(r, ms))
+
+test('the queue runs at most `concurrency` jobs at once, in order', async () => {
+  const q = createQueue(2)
+  let active = 0
+  let peak = 0
+  const started = []
+  const jobs = [1, 2, 3, 4, 5].map(n => q.add(async () => {
+    started.push(n)
+    active++
+    peak = Math.max(peak, active)
+    await tick(10)
+    active--
+    return n * 10
+  }))
+  assert.equal(q.active, 2)
+  assert.equal(q.waiting, 3)
+  assert.deepEqual(await Promise.all(jobs), [10, 20, 30, 40, 50])
+  assert.equal(peak, 2)
+  assert.deepEqual(started, [1, 2, 3, 4, 5])
+  await assert.rejects(q.add(() => { throw new Error('boom') }), /boom/)
+  assert.throws(() => createQueue(0), /1 or more/)
+})
+
+test('rate limits are recognised however the backend words them', () => {
+  for (const msg of ['OpenRouter 429: Rate limit exceeded', 'claude CLI error: You have hit your usage limit', 'Too Many Requests', 'overloaded_error', 'OpenRouter 529: at capacity']) {
+    assert.ok(isRateLimit(new Error(msg)), msg)
+  }
+  assert.ok(!isRateLimit(new Error('The reviewer did not return readable JSON')))
+})
+
+test('withRetry waits the given delays for a rate limit, then gives up with the error', async () => {
+  const waits = []
+  const sleep = ms => { waits.push(ms); return Promise.resolve() }
+  let calls = 0
+  const flaky = async () => { if (++calls < 3) throw new Error('429 rate limit'); return 'ok' }
+  assert.equal(await withRetry(flaky, { delays: [1, 2, 3], sleep }), 'ok')
+  assert.deepEqual(waits, [1, 2])
+  calls = 0
+  await assert.rejects(withRetry(flaky, { delays: [1], sleep }), /rate limit/, 'one retry was not enough')
+  let other = 0
+  await assert.rejects(withRetry(async () => { other++; throw new Error('bad JSON') }, { delays: [1, 2], sleep }), /bad JSON/)
+  assert.equal(other, 1, 'only rate limits are retried')
+})
+
+test('review concurrency comes from the config, then the backend', () => {
+  assert.equal(concurrencyFor({ name: 'claude-cli' }), 2)
+  assert.equal(concurrencyFor({ name: 'openrouter' }), 4)
+  assert.equal(concurrencyFor({ name: 'claude-cli', concurrency: 5 }), 5)
+  const root = tmp()
+  writeFileSync(join(root, 'affidavit.config.json'), JSON.stringify({ backend: { concurrency: 3 } }))
+  assert.equal(concurrencyFor(loadConfig(root).backend), 3)
+})
+
+/** A project with a runs folder, and a captured-but-unreviewed run in it. */
+function project(extra = {}) {
+  const root = tmp()
+  writeFileSync(join(root, 'affidavit.config.json'), JSON.stringify(extra))
+  const config = loadConfig(root)
+  mkdirSync(config.runsDir, { recursive: true })
+  return config
+}
+
+const PNG = Buffer.from('89504e470d0a1a0a', 'hex')
+
+function fakeRun(config, { id = 'demo', runId = 'ab2cd', when = '2026-10-08T10:00:00.000Z', blocked = false } = {}) {
+  const startedAt = new Date(when)
+  const dir = join(config.runsDir, `${when.slice(0, 19).replace(/[-:]/g, '').replace('T', '-')}-${id}`)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'step-00.png'), PNG)
+  writeFileSync(join(dir, 'step-01.png'), PNG)
+  const spec = {
+    file: `qa/specs/${id}.qa.md`, id, title: `Demo ${id}`, goal: 'Do the thing.', mode: 'scripted', role: 'admin', signedIn: true,
+    viewportSize: { width: 390, height: 844, name: 'phone' }, start: '/home',
+    preconditions: ['Signed in.'], successCriteria: ['It worked.'], failureSignals: ['Something went wrong'], outOfScope: ['Email'],
+  }
+  const records = [
+    { n: 0, title: 'Sign in as admin and open /home', actions: [{ text: 'open "/login"', ok: true }], expect: ['Signed in.'], status: 'done', screenshot: 'step-00.png', png: PNG, url: 'http://localhost:3000/home' },
+    { n: 1, title: 'Open it', actions: [{ text: 'click "Open"', ok: !blocked, note: blocked ? 'Could not see "Open" on screen' : undefined }], expect: ['It is open.'], status: blocked ? 'blocked' : 'done', error: blocked ? 'Could not see "Open" on screen' : undefined, screenshot: 'step-01.png', png: PNG, url: 'http://localhost:3000/x' },
+  ]
+  const run = {
+    dir, spec, runId, startedAt, today: '2026-10-08', base: 'http://localhost:3000', records, outcome: null, usage: null, recordedSpec: null,
+    verdict: null, reviewError: null, reviewedAt: null, result: blocked ? 'blocked' : 'not_reviewed', timings: { browserMs: 1234, queuedMs: null, reviewMs: null },
+  }
+  writeRun(run)
+  return run
+}
+
+const PASSING = { steps: [{ n: 0, verdict: 'pass' }, { n: 1, verdict: 'pass' }], criteria: [{ text: 'It worked.', verdict: 'pass' }], failure_signals: [{ text: 'x', seen: false }], other_issues: [], summary: 'Fine.' }
+
+test('result.json carries what a review needs, and loads back with the screenshots', () => {
+  const config = project()
+  const written = fakeRun(config)
+  const json = JSON.parse(readFileSync(join(written.dir, 'result.json'), 'utf8'))
+  assert.equal(json.affidavit, RESULT_FORMAT)
+  assert.deepEqual(json.successCriteria, ['It worked.'])
+  assert.deepEqual(json.timings, { browserMs: 1234, queuedMs: null, reviewMs: null })
+  assert.equal(json.result, 'not_reviewed')
+  assert.equal(json.steps[0].png, undefined, 'screenshots stay as files')
+  const run = loadRun(written.dir, config)
+  assert.equal(run.spec.title, 'Demo demo')
+  assert.deepEqual(run.spec.failureSignals, ['Something went wrong'])
+  assert.deepEqual(run.spec.viewportSize, { width: 390, height: 844, name: 'phone' })
+  assert.ok(Buffer.isBuffer(run.records[1].png) && run.records[1].png.equals(PNG))
+  assert.equal(run.timings.browserMs, 1234)
+  assert.equal(run.today, '2026-10-08')
+  assert.throws(() => loadRun(join(config.runsDir, 'nope'), config), /not a run folder/)
+})
+
+test('a run captured before format 2 is reviewed against the spec file as it is today', () => {
+  const config = project()
+  mkdirSync(config.specsDir, { recursive: true })
+  writeFileSync(join(config.specsDir, 'demo.qa.md'), SPEC)
+  const dir = join(config.runsDir, '20261001-100000-demo')
+  mkdirSync(dir)
+  writeFileSync(join(dir, 'result.json'), JSON.stringify({
+    affidavit: 1, spec: 'qa/specs/demo.qa.md', id: 'demo', title: 'Demo flow', goal: 'Do the thing.', mode: 'scripted', role: 'admin',
+    viewport: { width: 390, height: 844, name: 'phone' }, startedAt: '2026-10-01T10:00:00.000Z', base: 'http://localhost:3000', runId: 'xyz23',
+    result: 'not_reviewed', outcome: null, steps: [], verdict: null,
+  }))
+  const run = loadRun(dir, config)
+  assert.deepEqual(run.spec.successCriteria, ['It worked.'])
+  assert.equal(run.spec.signedIn, true)
+  rmSync(join(config.specsDir, 'demo.qa.md'))
+  assert.throws(() => loadRun(dir, config), /older Affidavit[\s\S]*is gone/)
+})
+
+test('reviewRun: a rate limit is retried, then recorded as not_reviewed with the reason — never fail', async () => {
+  const config = project()
+  const log = []
+  const sleep = () => Promise.resolve()
+  // Limited twice, then answers.
+  let calls = 0
+  const run = fakeRun(config)
+  await reviewRun(run, config, { log: m => log.push(m), sleep, delays: [1, 1, 1], reviewer: async () => { if (++calls < 3) throw new Error('OpenRouter 429: rate limit'); return PASSING } })
+  assert.equal(run.result, 'pass')
+  assert.equal(run.reviewError, null)
+  assert.equal(calls, 3)
+  assert.equal(log.filter(l => l.includes('retrying')).length, 2)
+  assert.equal(typeof run.timings.reviewMs, 'number')
+  let json = JSON.parse(readFileSync(join(run.dir, 'result.json'), 'utf8'))
+  assert.equal(json.result, 'pass')
+  assert.equal(json.verdict.summary, 'Fine.')
+  assert.ok(json.reviewedAt)
+
+  // Limited every time.
+  const stuck = fakeRun(config, { runId: 'cd3ef', when: '2026-10-08T11:00:00.000Z' })
+  await reviewRun(stuck, config, { log: () => {}, sleep, delays: [1, 1], reviewer: async () => { throw new Error('claude CLI error: You have hit your usage limit') } })
+  assert.equal(stuck.result, 'not_reviewed')
+  assert.match(stuck.reviewError, /usage limit/)
+  json = JSON.parse(readFileSync(join(stuck.dir, 'result.json'), 'utf8'))
+  assert.equal(json.result, 'not_reviewed')
+  assert.match(json.reviewError, /usage limit/)
+  assert.equal(json.verdict, null)
+  assert.match(readFileSync(join(stuck.dir, 'report.html'), 'utf8'), /Not reviewed[\s\S]*review --unreviewed/)
+
+  // A blocked run that cannot be reviewed stays blocked, not fail.
+  const blocked = fakeRun(config, { id: 'other', runId: 'ef4gh', when: '2026-10-08T12:00:00.000Z', blocked: true })
+  await reviewRun(blocked, config, { log: () => {}, sleep, delays: [], reviewer: async () => { throw new Error('429') } })
+  assert.equal(blocked.result, 'blocked')
+})
+
+test('selectRuns: named folders, every spec\'s latest run, or the unreviewed ones; .sessions is ignored', async () => {
+  const config = project()
+  const a1 = fakeRun(config, { id: 'a', when: '2026-10-08T10:00:00.000Z' })
+  const a2 = fakeRun(config, { id: 'a', when: '2026-10-08T11:00:00.000Z' })
+  const b1 = fakeRun(config, { id: 'b', when: '2026-10-08T10:30:00.000Z' })
+  mkdirSync(join(config.runsDir, '.sessions'))
+  writeFileSync(join(config.runsDir, '.sessions', 'admin-abc12345.json'), '{"cookies":[]}')
+  await reviewRun(a2, config, { log: () => {}, reviewer: async () => PASSING })
+  assert.equal(collectRuns(config).length, 3)
+  assert.deepEqual(selectRuns(config, { latest: true }), [a2.dir, b1.dir].sort())
+  assert.deepEqual(selectRuns(config, { unreviewed: true }), [a1.dir, b1.dir].sort())
+  assert.deepEqual(selectRuns(config, { args: [basename(b1.dir)] }), [b1.dir])
+  assert.deepEqual(selectRuns(config, { args: [b1.dir], unreviewed: true }), [a1.dir, b1.dir].sort(), 'no duplicates')
+  assert.throws(() => resolveRunArg('nope', config), /No run "nope"/)
+  assert.deepEqual(selectRuns(config), [])
+})
+
+test('reviewRuns reviews existing runs from disk with the given concurrency', async () => {
+  const config = project()
+  const runs = [1, 2, 3].map(n => fakeRun(config, { id: `s${n}`, when: `2026-10-08T1${n}:00:00.000Z` }))
+  let active = 0
+  let peak = 0
+  const results = await reviewRuns(runs.map(r => r.dir), config, {
+    reviewConcurrency: 2,
+    reviewer: async () => { active++; peak = Math.max(peak, active); await tick(10); active--; return PASSING },
+  }, () => {})
+  assert.equal(peak, 2)
+  assert.deepEqual(results.map(r => r.result), ['pass', 'pass', 'pass'])
+  for (const r of runs) assert.equal(JSON.parse(readFileSync(join(r.dir, 'result.json'), 'utf8')).result, 'pass')
+})
+
+test('runMany pipelines: the next capture starts while the last review runs, and the summary keeps spec order', async () => {
+  const config = project()
+  const events = []
+  let n = 0
+  const capture = async file => {
+    events.push(`capture ${basename(file)}`)
+    await tick(5)
+    return fakeRun(config, { id: basename(file, '.qa.md'), when: `2026-10-08T1${n++}:00:00.000Z` })
+  }
+  let active = 0
+  let peak = 0
+  const reviewer = async ({ spec }) => {
+    events.push(`review ${spec.id}`)
+    active++
+    peak = Math.max(peak, active)
+    await tick(30)
+    active--
+    events.push(`done ${spec.id}`)
+    if (spec.id === 'b') throw new Error('429 rate limit')
+    return PASSING
+  }
+  const files = ['a.qa.md', 'b.qa.md', 'c.qa.md']
+  const log = []
+  const results = await runMany(files, config, { base: 'http://localhost:3000', review: true, capture, reviewer, delays: [], reviewConcurrency: 1 }, m => log.push(m))
+  assert.deepEqual(results.map(r => [r.file, r.result]), [['a.qa.md', 'pass'], ['b.qa.md', 'not_reviewed'], ['c.qa.md', 'pass']])
+  // Captures take 5ms and reviews 30ms: with a pipeline, c is captured before a's review is done.
+  assert.ok(events.indexOf('capture c.qa.md') < events.indexOf('done a'), `captures waited for reviews: ${events.join(', ')}`)
+  assert.deepEqual(events.filter(e => e.startsWith('review')), ['review a', 'review b', 'review c'], 'reviews run in capture order')
+  assert.equal(peak, 1, 'the concurrency limit holds')
+  const summary = log.join('\n')
+  assert.match(summary, /Summary\n {2}pass {9}a\.qa\.md\n {2}not_reviewed b\.qa\.md {2}\(not reviewed: 429 rate limit\)\n {2}pass {9}c\.qa\.md/)
+  assert.match(summary, /1 run was not reviewed[\s\S]*npx affidavit review --unreviewed/)
+
+  // --no-review: screenshots only, and the hint to review later.
+  const log2 = []
+  const r2 = await runMany(['d.qa.md'], config, { base: 'http://localhost:3000', review: false, capture }, m => log2.push(m))
+  assert.equal(r2[0].result, 'not_reviewed')
+  assert.match(log2.join('\n'), /Screenshots only[\s\S]*review --unreviewed/)
+})
+
+test('a saved session is kept per role and account under the runs folder', () => {
+  const config = project()
+  const admin = sessionPath(config, 'admin', { email: 'admin@test' })
+  assert.equal(join(config.runsDir, '.sessions'), join(admin, '..'))
+  assert.match(basename(admin), /^admin-[0-9a-f]{8}\.json$/)
+  assert.notEqual(admin, sessionPath(config, 'admin', { email: 'other@test' }), 'a changed test account never reuses the old session')
+  assert.equal(sessionPath(config, 'Team Lead', { email: 'x' }).includes('team-lead-'), true)
+  assert.deepEqual(sessionFor(config, 'admin', { email: 'admin@test' }), { path: admin, saved: false })
+  mkdirSync(join(admin, '..'), { recursive: true })
+  writeFileSync(admin, '{}')
+  assert.equal(sessionFor(config, 'admin', { email: 'admin@test' }).saved, true)
+  assert.equal(DEFAULTS.reuseSession, true)
+})
+
+test('the sign-in screen is recognised by its text, so an expired session is noticed', async () => {
+  const fakePage = visible => ({
+    getByText: t => ({ filter: () => ({ count: async () => (visible.includes(t) ? 1 : 0) }) }),
+    getByLabel: () => ({ filter: () => ({ count: async () => 0 }) }),
+    getByPlaceholder: () => ({ filter: () => ({ count: async () => 0 }) }),
+  })
+  assert.equal(await loginFormVisible(fakePage(['Email', 'Password']), DEFAULTS.auth, 10), true)
+  assert.equal(await loginFormVisible(fakePage(['Dashboard']), DEFAULTS.auth, 10), false)
+  assert.equal(await loginFormVisible(fakePage(['Email']), { type: 'none' }, 10), false)
 })

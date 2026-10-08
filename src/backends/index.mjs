@@ -2,6 +2,9 @@
 //
 //   chat({ model, system, content, maxTokens }) → { text, model, costUsd, tokens }
 //
+// plus DEFAULT_MODEL and DEFAULT_CONCURRENCY (how many reviews may run at
+// once: a CLI on a plan is tighter than an API with its own rate limits).
+//
 // `content` is a list of text() / image() parts from ./parts.mjs. Adding a
 // backend (Codex CLI, a local model…) is one file here plus one line below.
 
@@ -20,6 +23,13 @@ export function modelFor(backend, purpose) {
   const impl = BACKENDS[backend.name]
   if (!impl) throw new Error(`unknown backend "${backend.name}" (known: ${BACKEND_NAMES.join(', ')})`)
   return backend[`${purpose}Model`] || backend.model || impl.DEFAULT_MODEL
+}
+
+/** How many reviews run at once: the config's `backend.concurrency`, or the backend's own default. */
+export function concurrencyFor(backend) {
+  const impl = BACKENDS[backend.name]
+  if (!impl) throw new Error(`unknown backend "${backend.name}" (known: ${BACKEND_NAMES.join(', ')})`)
+  return backend.concurrency || impl.DEFAULT_CONCURRENCY || 1
 }
 
 export async function chat(backend, purpose, { system, content, maxTokens }) {
