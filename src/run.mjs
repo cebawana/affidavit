@@ -36,7 +36,7 @@ export function resolveSpecArg(arg, config) {
 }
 
 export function loadSpec(file, config) {
-  const spec = parseSpec(readFileSync(file, 'utf8'), relative(config.root, file), { leakTerms: config.leakTerms })
+  const spec = parseSpec(readFileSync(file, 'utf8'), relative(config.root, file), { leakTerms: config.leakTerms, defaultRole: config.defaultRole })
   spec.viewportSize = resolveViewport(spec.viewport, config)
   return spec
 }
@@ -46,11 +46,15 @@ export async function runSpec(file, config, opts, log = console.log) {
   const runId = newRunId()
   const today = new Date(startedAt.getTime() - startedAt.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
   const spec = bindVariables(loadSpec(file, config), { run: runId, today })
+  // Before the run folder exists: a missing sign-in must not leave an empty
+  // run behind, and it is the first thing a new user gets wrong.
+  const creds = credentialsFor(spec.role, config.envPrefix, config.auth)
+  // Without credentials the role is only a label: the reviewer and the report
+  // must not claim anyone signed in.
+  spec.signedIn = Boolean(creds)
   const dir = join(config.runsDir, `${stamp(startedAt)}-${spec.id}`)
   mkdirSync(dir, { recursive: true })
   log(`\n▶ ${spec.title}  [${spec.mode}, as ${spec.role}, ${spec.viewportSize.name}]  run ${runId}`)
-
-  const creds = credentialsFor(spec.role, config.envPrefix)
   const ctx = { base: opts.base, timeouts: config.timeouts, notFoundText: config.notFoundText, auth: config.auth }
   const { browser, page } = await openBrowser({
     viewport: spec.viewportSize, headed: opts.headed, locale: config.locale, channel: config.browser.channel, hide: config.hide,

@@ -33,7 +33,7 @@ export async function review({ spec, records, outcome, today, backend }) {
   const intro = [
     `Scenario: ${spec.title}`,
     `Today's date: ${today}`,
-    `Signed in as: ${spec.role === 'none' ? 'nobody (signed out)' : spec.role}`,
+    spec.signedIn ? `Signed in as: ${spec.role}` : `Signed in as: nobody${spec.role && spec.role !== 'none' ? ` (the app has no sign-in; the user is described as "${spec.role}")` : ' (signed out)'}`,
     `Screen size: ${spec.viewportSize.width}×${spec.viewportSize.height} (${spec.viewportSize.name})`,
     spec.goal ? `Goal: ${spec.goal}` : '',
     spec.preconditions.length ? `Preconditions:\n${spec.preconditions.map(p => `- ${p}`).join('\n')}` : '',

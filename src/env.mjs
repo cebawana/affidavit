@@ -18,14 +18,23 @@ export function loadEnv(root, files, prefix) {
   }
 }
 
-/** The sign-in for a spec's `role`, or null for `role: none` (signed out). */
-export function credentialsFor(role, prefix) {
-  if (role === 'none') return null
-  const key = role.toUpperCase().replace(/[^A-Z0-9]/g, '_')
-  const email = process.env[`${prefix}${key}_EMAIL`]
-  const password = process.env[`${prefix}${key}_PASSWORD`]
+/** QA_ADMIN for "admin"; the env variable stem for a role. */
+export function roleKey(role, prefix) {
+  return `${prefix}${role.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`
+}
+
+/**
+ * The sign-in for a spec's `role`, or null when there is nothing to sign in
+ * with: `role: none` (signed out), or an app without sign-in (`auth.type:
+ * "none"`), where the role is only a label.
+ */
+export function credentialsFor(role, prefix, auth = { type: 'form' }) {
+  if (role === 'none' || auth?.type === 'none') return null
+  const key = roleKey(role, prefix)
+  const email = process.env[`${key}_EMAIL`]
+  const password = process.env[`${key}_PASSWORD`]
   if (!email || !password) {
-    throw new Error(`No sign-in for role "${role}": set ${prefix}${key}_EMAIL and ${prefix}${key}_PASSWORD (e.g. in .env.qa.local)`)
+    throw new Error(`No sign-in for role "${role}": set ${key}_EMAIL and ${key}_PASSWORD (e.g. in .env.qa.local), or use "role: none" for pages that need no sign-in`)
   }
   return { email, password }
 }

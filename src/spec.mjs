@@ -39,13 +39,41 @@ function projectLeaks(terms = []) {
   })
 }
 
+export const FRONT_MATTER_KEYS = ['id', 'title', 'role', 'viewport', 'start']
+
+/** Edit distance, for "did you mean" hints. Small inputs, so the plain table is fine. */
+function distance(a, b) {
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i)
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0]
+    row[0] = i
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = row[j]
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1))
+      prev = tmp
+    }
+  }
+  return row[b.length]
+}
+
+function closest(word, candidates, max = 2) {
+  let best = null
+  for (const c of candidates) {
+    const d = distance(word.toLowerCase(), c.toLowerCase())
+    if (d <= max && (!best || d < best.d)) best = { c, d }
+  }
+  return best?.c ?? null
+}
+
 /**
  * @param {string} text  the spec file's contents
  * @param {string} file  a name for error messages
- * @param {{ leakTerms?: string[] }} [options]
+ * @param {{ leakTerms?: string[], defaultRole?: string | null }} [options]
  */
 export function parseSpec(text, file = 'spec', options = {}) {
   const errors = []
+  const warnings = []
+  let unknownAction = false
   const normalized = text.replace(/\r\n/g, '\n')
   const fm = normalized.match(/^---\n([\s\S]*?)\n---\n/)
   if (!fm) throw new Error(`${file}: missing the --- front matter block`)
@@ -53,14 +81,36 @@ export function parseSpec(text, file = 'spec', options = {}) {
   const meta = {}
   for (const line of fm[1].split('\n')) {
     const m = line.match(/^(\w+):\s*(.*)$/)
-    if (m) meta[m[1]] = m[2].trim()
+    if (!m) continue
+    if (!FRONT_MATTER_KEYS.includes(m[1])) {
+      // A near miss of a key we know is a typo, and with `defaultRole` set a
+      // typo like `rol:` would otherwise fall back silently. Anything else is
+      // a project's own metadata (`tags:`, `owner:`) and stays allowed.
+      // Two edits is a lot for a short word: `pr`, `ui`, `mode` and `state`
+      // are ordinary metadata, not typos of `id`, `role` and `start`. One
+      // edit always counts; two only for keys long enough to absorb them.
+      const hint = closest(m[1], FRONT_MATTER_KEYS, m[1].length >= 6 ? 2 : 1)
+      if (hint) errors.push(`front matter: unknown key "${m[1]}" — did you mean "${hint}:"?`)
+      else warnings.push(`front matter: key "${m[1]}" is not one Affidavit reads (${FRONT_MATTER_KEYS.join(', ')}); it is kept as is`)
+    }
+    meta[m[1]] = m[2].trim()
   }
-  for (const key of ['id', 'title', 'role']) if (!meta[key]) errors.push(`front matter needs "${key}"`)
+  if (!meta.role && options.defaultRole) meta.role = options.defaultRole
+  for (const key of ['id', 'title']) if (!meta[key]) errors.push(`front matter needs "${key}"`)
+  if (!meta.role) errors.push('front matter needs "role" (a role with sign-in credentials, or "none" for pages that need no sign-in; or set "defaultRole" in the config)')
+
+  // `run <id>` looks for <id>.qa.md, so an id that differs from the file name
+  // is a spec that can only be run by path.
+  const fileId = file.match(/([^/\\]+)\.qa\.md$/)?.[1]
+  if (meta.id && fileId && !fileId.startsWith('_') && fileId !== meta.id) {
+    warnings.push(`id "${meta.id}" differs from the file name "${fileId}.qa.md", so "run ${meta.id}" will not find it`)
+  }
 
   const spec = {
     ...meta,
     file,
     goal: '', preconditions: [], steps: [], successCriteria: [], failureSignals: [], outOfScope: [],
+    warnings,
   }
 
   let section = null
@@ -84,8 +134,12 @@ export function parseSpec(text, file = 'spec', options = {}) {
       if (item && step) {
         if (item[1].toLowerCase() === 'do') {
           const action = parseAction(item[2].trim())
-          if (!action) errors.push(`step "${step.title}": cannot read the action "${item[2].trim()}"`)
-          else step.actions.push(action)
+          if (action) step.actions.push(action)
+          else {
+            unknownAction = true
+            const hint = suggestAction(item[2].trim())
+            errors.push(`step "${step.title}": cannot read the action "${item[2].trim()}"${hint ? ` — did you mean \`${hint}\`?` : ''}`)
+          }
         } else step.expect.push(item[2].trim())
       }
       continue
@@ -106,7 +160,12 @@ export function parseSpec(text, file = 'spec', options = {}) {
     if (hit) errors.push(`mentions ${what} ("${hit[0]}") — specs describe only what is visible on screen`)
   }
 
-  if (errors.length) throw new Error(`${file}:\n  - ${errors.join('\n  - ')}`)
+  if (errors.length) {
+    const err = new Error(`${file}:\n  - ${errors.join('\n  - ')}`)
+    // The caller prints the vocabulary once per run, not once per bad line.
+    err.unknownAction = unknownAction
+    throw err
+  }
   return spec
 }
 
@@ -151,6 +210,45 @@ export function parseAction(text) {
   }
   return null
 }
+
+// Words people reach for that mean one of ours. Only the verb is mapped; the
+// quoted targets of the written line are kept.
+const SYNONYMS = {
+  tap: 'click', 'click on': 'click', push: 'click', choose: 'click', navigate: 'open', 'go to': 'open', visit: 'open', goto: 'open',
+  type: 'fill', enter: 'fill', 'type in': 'fill', write: 'fill', input: 'fill',
+  pick: 'select', tick: 'check', untick: 'uncheck', hit: 'press',
+  scroll: 'scroll to', 'scroll down': 'scroll to', 'scroll down to': 'scroll to', 'scroll up': 'scroll to', 'scroll and look for': 'scroll to', 'look for': 'wait for', find: 'wait for', see: 'wait for', expect: 'wait for', wait: 'wait for', 'wait until': 'wait until gone',
+  refresh: 'reload',
+}
+
+/**
+ * The closest valid action for a line the parser could not read, or null.
+ * Keeps the quoted targets from the written line and fills them into the
+ * vocabulary entry's slots, so the hint is ready to paste.
+ */
+export function suggestAction(text) {
+  const clean = text.trim().replace(/^`|`$/g, '')
+  const quoted = [...clean.matchAll(/"([^"]*)"/g)].map(m => m[1])
+  // `type "value" into "Field"` names the value first; `fill` names the field first.
+  if (/\binto\b/i.test(clean) && quoted.length === 2) quoted.reverse()
+  const verb = clean.replace(/"[^"]*"/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
+  if (!verb) return null
+  const verbs = [...new Set(ACTIONS_VERBS)]
+  // Longest synonym or verb that the written line starts with, else the nearest by spelling.
+  const starts = [...Object.keys(SYNONYMS), ...verbs].filter(v => verb === v || verb.startsWith(`${v} `)).sort((a, b) => b.length - a.length)[0]
+  const firstWord = verb.split(' ')[0]
+  const kind = starts ? (SYNONYMS[starts] ?? starts) : (closest(firstWord, verbs) ?? SYNONYMS[closest(firstWord, Object.keys(SYNONYMS)) ?? ''])
+  if (!kind) return null
+  // Prefer the vocabulary entry whose slot count matches what was written.
+  const entries = ACTION_VOCABULARY.filter(e => e.toLowerCase().startsWith(kind))
+  const slots = e => (e.match(/"[^"]*"/g) ?? []).length
+  const entry = entries.find(e => slots(e) === quoted.length) ?? entries.sort((a, b) => slots(a) - slots(b))[0]
+  if (!entry) return null
+  let i = 0
+  return entry.replace(/"[^"]*"/g, () => `"${quoted[i++] ?? '…'}"`)
+}
+
+const ACTIONS_VERBS = ACTION_VOCABULARY.map(e => e.replace(/\s*"[^"]*"/g, '').replace(/\s+(near|with|option)\s*$/, '').trim().toLowerCase())
 
 /** Replaces {run} and {today} in every string of the spec. */
 export function bindVariables(spec, vars) {

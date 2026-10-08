@@ -50,12 +50,24 @@ Needs Node 20+, Google Chrome, and (for the default reviewer) the
 
 ```bash
 npm i -D affidavit                  # or straight from GitHub: npm i -D github:cebawana/affidavit
-npx affidavit init                  # config, example spec, env template, Claude Code skill
-cp .env.qa.example .env.qa.local    # fill in test accounts
-npx affidavit doctor                # browser, reviewer, roles, server
+npx affidavit init --no-auth        # config, example spec, Claude Code skill
+npm run dev                         # start the app (in another terminal)
+npx affidavit doctor                # browser, reviewer, server: shows the page title it found
 npx affidavit run --all
 npx affidavit ledger                # one page for everything
 ```
+
+That is the whole setup for an app without a sign-in: no credentials, no
+`.env` file. `init` picks `baseUrl` from the framework (Vite 5173, Next 3000,
+or the port the dev script states); `--base-url <url>` overrides it.
+
+Scripts and coding agents have no terminal to answer in, so `init` without
+`--no-auth` sets up the sign-in form: pass `--no-auth` whenever the app has no
+sign-in.
+
+If the app has a login screen, run `npx affidavit init` instead (it asks), then
+`cp .env.qa.example .env.qa.local`, fill in the test accounts, and set `auth`
+in `affidavit.config.json` to the labels on your login screen.
 
 Non-JavaScript projects (Laravel, Rails, Django…) need only Node on the
 machine: run `npx affidavit …` from the project root.
@@ -64,9 +76,9 @@ machine: run `npx affidavit …` from the project root.
 
 | Command | What it does |
 |---|---|
-| `init [--preset next\|vite\|none]` | Writes `affidavit.config.json`, `qa/specs/_example.qa.md`, `.env.qa.example`, the skill in `.claude/skills/affidavit/`, and gitignore lines. Never overwrites a file. |
-| `doctor` | Checks the browser, reviewer backend, test accounts and that the app answers. |
-| `check [spec…]` | Parses specs without running them; reports every problem at once. |
+| `init [--no-auth] [--preset next\|vite\|none] [--base-url <url>]` | Writes `affidavit.config.json`, `qa/specs/_example.qa.md`, the skill in `.claude/skills/affidavit/`, and gitignore lines; with a sign-in, also `.env.qa.example`. Asks "Does the app need a sign-in?" in a terminal; `--no-auth` answers for scripts and agents. Never overwrites a file. |
+| `doctor` | Checks the browser, the reviewer backend, the roles your specs sign in as, and that the app answers: it shows the final URL and page title, so the wrong app on the port is obvious. |
+| `check [spec…]` | Parses specs without running them; reports every problem at once, with a "did you mean" for an action or front-matter key it cannot read. |
 | `run <spec…> \| --all` | Runs specs by path or id. `--no-review` (screenshots only), `--headed`, `--base <url>`, `--max-turns <n>`. Exits non-zero unless every spec passes. |
 | `ledger` | Builds one page with every spec's latest result, history, reviewer findings and screenshots (embedded, compressed). `--notes notes.md` adds your own panels; `--links` links screenshots instead; `--out`, `--title`. |
 
@@ -79,7 +91,7 @@ one `step-NN.png` per step.
 ---
 id: invoice-send
 title: Send an invoice to a client
-role: admin                     # reads QA_ADMIN_EMAIL / QA_ADMIN_PASSWORD; "none" = signed out
+role: admin                     # reads QA_ADMIN_EMAIL / QA_ADMIN_PASSWORD; "none" = no sign-in
 viewport: phone                 # desktop · phone · tablet · 390x844
 start: /invoices                # opened right after sign-in
 ---
@@ -119,7 +131,14 @@ model explores like a new user. If it reaches the goal, its path is saved as
 `recorded.qa.md` to keep as a scripted spec. If it gets lost, that is a finding:
 the UI did not show the way.
 
-Files starting with `_` are skipped by `run --all`.
+Files starting with `_` are skipped by `run --all`. Name the file after the
+`id` (`invoice-send.qa.md`) so `run invoice-send` finds it; `check` warns when
+they differ. Extra front-matter keys (`tags:`, `owner:`) are kept and ignored
+with a warning; a near miss of a known key (`rol:`) is an error.
+
+**No sign-in?** Use `role: none`, or set `"defaultRole": "none"` in the config
+and leave `role` out. With `"auth": {"type": "none"}` credentials are never
+looked up and any `role` is only a label shown in the report.
 
 ## Configuration
 
@@ -134,6 +153,7 @@ Files starting with `_` are skipped by `run --all`.
   "envFiles": [".env.qa.local"],
   "envPrefix": "QA_",
   "viewports": { "desktop": "1440x900", "phone": "390x844", "tablet": "820x1180" },
+  "defaultRole": null,
   "auth": {
     "type": "form",
     "loginPath": "/login",
@@ -149,9 +169,15 @@ Files starting with `_` are skipped by `run --all`.
 }
 ```
 
-- **auth**: the labels on *your* login screen. `"type": "none"` skips sign-in.
-- **preset**: dev-server noise per framework. `next` hides the dev badge and
-  retries the transient 404 Next.js shows while recompiling (always reported).
+- **auth**: the labels on *your* login screen. `"type": "none"` means the app
+  has no sign-in: credentials are never looked up, `doctor` reports "no sign-in
+  needed", and a role is only a label.
+- **defaultRole**: used by specs that leave `role` out. Unset by default on
+  purpose: in an app with a login, a spec that forgot its role would otherwise
+  run signed out without anyone noticing. `init --no-auth` sets it to `"none"`.
+- **preset**: dev-server noise per framework, and the default `baseUrl` port
+  for `init`. `next` hides the dev badge and retries the transient 404 Next.js
+  shows while recompiling (always reported).
 - **backend**: `claude-cli` (default; your signed-in plan, no API key) or
   `openrouter` (`OPENROUTER_API_KEY`). `reviewModel` / `exploreModel` split them.
   A backend is one file in `src/backends/`.

@@ -1,6 +1,6 @@
 {
   "name": "affidavit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Visual-only QA for web apps: specs in on-screen language, a browser that finds things by what it can see, and a reviewer that testifies only to the screenshots.",
   "license": "MIT",
   "author": "Cris Bawana",

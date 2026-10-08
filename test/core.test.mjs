@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { bindVariables, parseAction, parseSpec, toSpecMarkdown } from '../src/spec.mjs'
@@ -119,4 +119,161 @@ test('the verdict is computed, never taken from the model', () => {
   assert.equal(overall([{ status: 'blocked' }], passing), 'blocked')
   assert.equal(overall(done, null), 'not_reviewed')
   assert.equal(overall(done, passing, { stuck: true }), 'blocked')
+})
+
+// --- First-run experience (#28): apps without sign-in, presets, hints ---
+
+import { credentialsFor } from '../src/env.mjs'
+import { suggestAction } from '../src/spec.mjs'
+import { PRESETS } from '../src/presets.mjs'
+import { detectPort, init, pageTitle, rolesCheck, serverDetail, viteServerPort } from '../src/init.mjs'
+import { existsSync, readFileSync } from 'node:fs'
+
+const tmp = () => mkdtempSync(join(tmpdir(), 'affidavit-test-'))
+
+test('auth.type none never looks credentials up', () => {
+  delete process.env.QA_ADMIN_EMAIL
+  assert.equal(credentialsFor('admin', 'QA_', { type: 'none' }), null)
+  assert.equal(credentialsFor('none', 'QA_', { type: 'form' }), null)
+  assert.throws(() => credentialsFor('admin', 'QA_', { type: 'form' }), /QA_ADMIN_EMAIL[\s\S]*role: none/)
+})
+
+test('defaultRole fills a missing role; without it role is required', () => {
+  const noRole = SPEC.replace('role: admin\n', '')
+  assert.equal(parseSpec(noRole, 'demo', { defaultRole: 'none' }).role, 'none')
+  assert.equal(parseSpec(SPEC, 'demo', { defaultRole: 'none' }).role, 'admin', 'a written role wins')
+  assert.throws(() => parseSpec(noRole, 'demo'), /needs "role"[\s\S]*defaultRole/)
+})
+
+test('front matter typos get a hint', () => {
+  assert.throws(() => parseSpec(SPEC.replace('role: admin', 'rol: admin'), 'demo'), /unknown key "rol" — did you mean "role:"/)
+  assert.match(parseSpec(SPEC.replace("role: admin", "role: admin\nauthor: me"), "demo").warnings[0], /key "author" is not one Affidavit reads/)
+})
+
+test('an id that differs from the file name is a warning, not an error', () => {
+  assert.deepEqual(parseSpec(SPEC, 'qa/specs/demo.qa.md').warnings, [])
+  assert.match(parseSpec(SPEC, 'qa/specs/other.qa.md').warnings[0], /id "demo" differs from the file name "other.qa.md"/)
+  assert.deepEqual(parseSpec(SPEC, 'qa/specs/_template.qa.md').warnings, [], 'templates are copied and renamed, so no warning')
+})
+
+test('unknown actions suggest the closest valid one', () => {
+  assert.equal(suggestAction('scroll and look for "Pricing"'), 'scroll to "Pricing"')
+  assert.equal(suggestAction('tap "Save"'), 'click "Save"')
+  assert.equal(suggestAction('clik "Save"'), 'click "Save"')
+  assert.equal(suggestAction('type "Ada" into "Name"'), 'fill "Name" with "Ada"')
+  assert.equal(suggestAction('go to "/home"'), 'open "/home"')
+  assert.equal(suggestAction('click "A" next to "B"'), 'click "A" near "B"')
+  assert.equal(suggestAction('refresh'), 'reload')
+  assert.equal(suggestAction('hover "Menu"'), null)
+  let err
+  try { parseSpec(SPEC.replace('click "Open"', 'scroll and look for "Open"'), 'demo') } catch (e) { err = e }
+  assert.match(err.message, /did you mean `scroll to "Open"`/)
+  assert.equal(err.unknownAction, true, 'so the CLI can print the vocabulary once per run')
+})
+
+test('presets carry the dev-server port and the project can override it', () => {
+  assert.equal(PRESETS.vite.port, 5173)
+  assert.equal(PRESETS.next.port, 3000)
+  const root = tmp()
+  assert.equal(detectPort(root), null)
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: { dev: 'vite --port 4321' } }))
+  assert.equal(detectPort(root), 4321)
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: { dev: 'next dev -p 3100' } }))
+  assert.equal(detectPort(root), 3100)
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: { dev: 'vite' } }))
+  writeFileSync(join(root, 'vite.config.ts'), 'export default { server: { port: 8080 } }')
+  assert.equal(detectPort(root), 8080)
+})
+
+test('init --no-auth: no credentials anywhere, Vite port, example with role none', () => {
+  const root = tmp()
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'site', devDependencies: { vite: '^6' } }))
+  init(root, { auth: false })
+  const config = JSON.parse(readFileSync(join(root, 'affidavit.config.json'), 'utf8'))
+  assert.equal(config.baseUrl, 'http://localhost:5173')
+  assert.equal(config.preset, 'vite')
+  assert.deepEqual(config.auth, { type: 'none' })
+  assert.equal(config.defaultRole, 'none')
+  assert.ok(!existsSync(join(root, '.env.qa.example')), 'no env template for an app without sign-in')
+  const example = readFileSync(join(root, 'qa/specs/_example.qa.md'), 'utf8')
+  assert.match(example, /^role: none$/m)
+  // The generated project parses and resolves with no env file at all.
+  const loaded = loadConfig(root)
+  const spec = parseSpec(example, '_example.qa.md', { defaultRole: loaded.defaultRole })
+  assert.equal(credentialsFor(spec.role, loaded.envPrefix, loaded.auth), null)
+  assert.equal(rolesCheck(loaded).detail, 'no sign-in needed (auth.type is "none")')
+})
+
+test('init with sign-in keeps today\'s shape, and --base-url wins over the preset', () => {
+  const root = tmp()
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { next: '15' } }))
+  init(root, { baseUrl: 'http://localhost:4000' })
+  const config = JSON.parse(readFileSync(join(root, 'affidavit.config.json'), 'utf8'))
+  assert.equal(config.baseUrl, 'http://localhost:4000')
+  assert.equal(config.auth.type, 'form')
+  assert.equal(config.defaultRole, undefined)
+  assert.ok(existsSync(join(root, '.env.qa.example')))
+  assert.match(readFileSync(join(root, 'qa/specs/_example.qa.md'), 'utf8'), /^role: admin$/m)
+})
+
+test('roles check follows what the specs need', () => {
+  const root = tmp()
+  writeFileSync(join(root, 'affidavit.config.json'), '{}')
+  const config = loadConfig(root)
+  mkdirSync(config.specsDir, { recursive: true })
+  writeFileSync(join(config.specsDir, 'demo.qa.md'), SPEC.replace('role: admin', 'role: none'))
+  assert.equal(rolesCheck(config).detail, 'no sign-in needed (every spec uses role: none)')
+  writeFileSync(join(config.specsDir, 'demo.qa.md'), SPEC)
+  delete process.env.QA_ADMIN_EMAIL
+  delete process.env.QA_ADMIN_PASSWORD
+  const missing = rolesCheck(config)
+  assert.equal(missing.ok, false)
+  assert.match(missing.detail, /no credentials for admin: set QA_ADMIN_EMAIL \/ _PASSWORD[\s\S]*role: none/)
+  process.env.QA_ADMIN_EMAIL = 'a@b.test'
+  process.env.QA_ADMIN_PASSWORD = 'x'
+  assert.deepEqual(rolesCheck(config), { ok: true, detail: 'admin' })
+  delete process.env.QA_ADMIN_EMAIL
+  delete process.env.QA_ADMIN_PASSWORD
+})
+
+test('doctor shows what answered', () => {
+  assert.equal(pageTitle('<html><head><title>\n  Portfolio </title></head></html>'), 'Portfolio')
+  assert.equal(pageTitle('<p>no title</p>'), null)
+  assert.equal(serverDetail('http://localhost:5173', 'http://localhost:5173/', 'Portfolio'), 'http://localhost:5173 → "Portfolio"')
+  assert.equal(serverDetail('http://localhost:3000', 'http://localhost:3000/login?next=%2F', 'Other App'), 'http://localhost:3000 → /login?next=%2F "Other App"')
+  assert.equal(serverDetail('http://localhost:3000', 'https://accounts.example.com/sso', null), 'http://localhost:3000 → https://accounts.example.com/sso (no page title)')
+})
+
+test('an unrelated front-matter key is kept with a warning; a typo is an error', () => {
+  const spec = parseSpec(SPEC.replace('role: admin', 'role: admin\ngrandmap: finance'), 'demo')
+  assert.equal(spec.grandmap, 'finance')
+  assert.match(spec.warnings[0], /key "grandmap" is not one Affidavit reads/)
+  assert.throws(() => parseSpec(SPEC.replace('viewport: phone', 'viewprot: phone'), 'demo'), /did you mean "viewport:"/)
+})
+
+test('the typo check scales with key length, so short metadata keys are warnings', () => {
+  const cases = [
+    ['rol: admin', 'role'],        // one edit: a typo at any length
+    ['viewprot: phone', 'viewport'], // two edits in an 8-letter key: a typo
+    ['state: draft', null],        // two edits from `start`, but only 5 letters
+    ['pr: 12', null],              // two edits from `id`
+    ['ui: v2', null],              // two edits from `id`
+    ['mode: fast', null],          // two edits from `role`
+  ]
+  for (const [line, typoOf] of cases) {
+    const text = SPEC.replace('role: admin', `role: admin\n${line}`)
+    if (typoOf) {
+      assert.throws(() => parseSpec(text, 'demo'), new RegExp(`unknown key "${line.split(':')[0]}" — did you mean "${typoOf}:"`), line)
+    } else {
+      const spec = parseSpec(text, 'demo')
+      assert.match(spec.warnings.join('\n'), new RegExp(`key "${line.split(':')[0]}" is not one Affidavit reads`), line)
+    }
+  }
+})
+
+test('vite server.port is read from the server block only', () => {
+  assert.equal(viteServerPort('export default { server: { hmr: { port: 24678 }, port: 4000 } }'), 4000)
+  assert.equal(viteServerPort('export default { server: { hmr: { port: 24678 } } }'), null)
+  assert.equal(viteServerPort('export default { preview: { port: 4173 } }'), null)
+  assert.equal(viteServerPort('export default defineConfig({\n  server: {\n    port: 5180,\n    open: true,\n  },\n})'), 5180)
 })
