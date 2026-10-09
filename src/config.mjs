@@ -31,11 +31,22 @@ export const DEFAULTS = {
     submit: 'Sign in',
     // Text that disappears once signed in. Defaults to the email field's label.
     doneWhenGone: null,
+    // Text only a signed-in user sees ("Sign out", the account's name). When
+    // set, a saved session counts as live only if this is on screen; without
+    // it, the browser probes loginPath and must be sent away from it.
+    signedInText: null,
   },
-  backend: { name: 'claude-cli', model: null, reviewModel: null, exploreModel: null },
+  // `concurrency`: how many reviews run at once while the browser captures the
+  // next spec; unset means the backend's own default (see src/backends/).
+  backend: { name: 'claude-cli', model: null, reviewModel: null, exploreModel: null, concurrency: null },
+  // Save the signed-in session per role and reuse it on the next spec of that
+  // role; the browser looks for the sign-in screen and signs in again if it
+  // shows. `run --fresh-sign-in` ignores saved sessions for one run.
+  reuseSession: true,
   leakTerms: [],
   hide: [],
-  timeouts: { find: 15000, gone: 20000, signIn: 90000 },
+  // sessionCheck: how long a saved session's sign-in screen or marker gets to appear.
+  timeouts: { find: 15000, gone: 20000, signIn: 90000, sessionCheck: 1000 },
   allowRemote: false,
   maxTurns: 25,
 }
@@ -87,6 +98,7 @@ export function loadConfig(root) {
   if (env('MODEL')) config.backend.model = env('MODEL')
   if (env('REVIEW_MODEL')) config.backend.reviewModel = env('REVIEW_MODEL')
   if (env('EXPLORE_MODEL')) config.backend.exploreModel = env('EXPLORE_MODEL')
+  if (env('REVIEW_CONCURRENCY')) config.backend.concurrency = Number(env('REVIEW_CONCURRENCY'))
   if (env('LOCALE')) config.locale = env('LOCALE')
   if (env('ALLOW_REMOTE') === '1') config.allowRemote = true
   return config

@@ -8,9 +8,11 @@ import { chromium } from 'playwright-core'
 const CLICK_ROLES = ['button', 'link', 'tab', 'menuitem', 'option', 'checkbox', 'radio', 'switch', 'combobox']
 const CONTROL = 'input:not([type=hidden]):not([type=checkbox]):not([type=radio]), textarea, select'
 
-export async function openBrowser({ viewport, headed, locale, channel, hide }) {
-  const browser = await chromium.launch({ channel: channel || undefined, headless: !headed })
-  const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height }, locale, deviceScaleFactor: 1 })
+async function newPage(browser, { viewport, locale, hide, storageState }) {
+  const context = await browser.newContext({
+    viewport: { width: viewport.width, height: viewport.height }, locale, deviceScaleFactor: 1,
+    storageState: storageState || undefined,
+  })
   // Dev-only overlays (a framework's badge) sit over the app's own UI in every
   // screenshot, and the reviewer rightly reports them as overlapping text.
   if (hide?.length) {
@@ -19,8 +21,24 @@ export async function openBrowser({ viewport, headed, locale, channel, hide }) {
       if (document.head) apply(); else document.addEventListener('DOMContentLoaded', apply)
     }, hide.map(sel => `${sel}{display:none!important}`).join(''))
   }
-  const page = await context.newPage()
-  return { browser, page }
+  return context.newPage()
+}
+
+/**
+ * @param {string} [options.storageState] a saved session (cookies and storage)
+ *   to start from, so the role is already signed in.
+ * @returns {{ browser, page, fresh }} `fresh(page)` closes that page's context
+ *   and opens a new one with nothing stored, whatever the app keeps its
+ *   session in (cookies, local storage, IndexedDB), so a sign-in starts clean.
+ */
+export async function openBrowser({ viewport, headed, locale, channel, hide, storageState }) {
+  const browser = await chromium.launch({ channel: channel || undefined, headless: !headed })
+  const page = await newPage(browser, { viewport, locale, hide, storageState })
+  const fresh = async old => {
+    await old.context().close().catch(() => {})
+    return newPage(browser, { viewport, locale, hide })
+  }
+  return { browser, page, fresh }
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -212,16 +230,50 @@ export async function perform(page, ctx, action) {
   }
 }
 
+/** Whether `text` is on screen, giving a client-side render or redirect up to `wait` ms to show it. */
+export async function textVisible(page, text, wait = 1000) {
+  return Boolean(await poll(async () => ((await page.getByText(text).filter({ visible: true }).count()) ? true : null), wait))
+}
+
+/**
+ * Whether the sign-in screen is showing — judged the way a person would, by
+ * the text on it (the field label that `doneWhenGone` waits for). A saved
+ * session that lands here has expired. A client-side redirect to the login
+ * page can take a moment, so this looks for a short while before saying no.
+ */
+export async function loginFormVisible(page, auth, wait = 1000) {
+  if (auth?.type !== 'form') return false
+  const marker = auth.doneWhenGone || auth.fields?.email
+  if (!marker) return false
+  return Boolean(await poll(async () => {
+    for (const loc of [page.getByText(marker), page.getByLabel(marker), page.getByPlaceholder(marker)]) {
+      if (await loc.filter({ visible: true }).count()) return true
+    }
+    return null
+  }, wait))
+}
+
+/** Whether `url` is the sign-in page (path only; the query may carry a "next" target). */
+export function onLoginPath(url, loginPath, base) {
+  try {
+    const strip = p => p.replace(/\/+$/, '') || '/'
+    return strip(new URL(url).pathname) === strip(new URL(loginPath, base).pathname)
+  } catch {
+    return false
+  }
+}
+
 /**
  * Signs in through the app's own login screen, as configured. The password is
- * masked in every log, report and reviewer prompt.
+ * masked in every log, report and reviewer prompt. `onLoginPage` skips opening
+ * the login page when the form is already on screen.
  */
-export function signInSteps(auth, creds, start, signInTimeout) {
+export function signInSteps(auth, creds, start, signInTimeout, { onLoginPage = false } = {}) {
   const steps = []
   if (creds && auth.type === 'form') {
     const { email, password } = auth.fields
+    if (!onLoginPage) steps.push({ kind: 'open', path: auth.loginPath, text: `open "${auth.loginPath}"` })
     steps.push(
-      { kind: 'open', path: auth.loginPath, text: `open "${auth.loginPath}"` },
       { kind: 'fill', target: email, value: creds.email, text: `fill "${email}" with "${creds.email}"` },
       { kind: 'fill', target: password, value: creds.password, text: `fill "${password}" with "••••••••"` },
       { kind: 'click', target: auth.submit, text: `click "${auth.submit}"` },

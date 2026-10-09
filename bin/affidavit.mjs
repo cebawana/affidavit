@@ -9,7 +9,7 @@ import { CONFIG_FILE, findRoot, loadConfig } from '../src/config.mjs'
 import { assertLocalBase, loadEnv } from '../src/env.mjs'
 import { doctor, init } from '../src/init.mjs'
 import { writeLedger } from '../src/ledger.mjs'
-import { allSpecs, loadSpec, resolveSpecArg, runMany } from '../src/run.mjs'
+import { allSpecs, loadSpec, resolveSpecArg, reviewRuns, runMany, selectRuns } from '../src/run.mjs'
 import { ACTION_VOCABULARY } from '../src/spec.mjs'
 
 const PKG = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../package.json'), 'utf8'))
@@ -21,6 +21,8 @@ Usage
   affidavit doctor                           check the browser, reviewer, roles and server
   affidavit check [spec…]                    parse specs without running them
   affidavit run <spec…> | --all [options]    run specs (a path or an id)
+  affidavit review <run…> | --latest | --unreviewed
+                                             review runs that exist, without the browser
   affidavit ledger [options]                 one page: every spec, latest result, history
 
 Init options
@@ -34,6 +36,16 @@ Run options
   --headed          show the browser
   --base <url>      override baseUrl
   --max-turns <n>   explore mode turn limit
+  --review-concurrency <n>
+                    reviews running at once while the browser captures the next spec
+                    (default: backend.concurrency in the config, or the backend's own)
+  --fresh-sign-in   ignore saved sessions and sign in from scratch for this run
+
+Review options
+  <run…>            run folders (a path, or a name inside the runs folder)
+  --latest          every spec's latest run
+  --unreviewed      runs without a verdict: captured with --no-review, or left by a failed review
+  --review-concurrency <n>
 
 Ledger options
   --out <file>      default: <runs>/ledger.html
@@ -48,8 +60,8 @@ function parseFlags(argv) {
     const a = argv[i]
     if (!a.startsWith('--')) { flags._.push(a); continue }
     const key = a.slice(2)
-    if (['all', 'no-review', 'headed', 'links', 'help', 'no-auth'].includes(key)) flags[key] = true
-    else if (['base', 'base-url', 'max-turns', 'out', 'title', 'notes', 'preset'].includes(key)) flags[key] = argv[++i]
+    if (['all', 'no-review', 'headed', 'links', 'help', 'no-auth', 'latest', 'unreviewed', 'fresh-sign-in'].includes(key)) flags[key] = true
+    else if (['base', 'base-url', 'max-turns', 'out', 'title', 'notes', 'preset', 'review-concurrency'].includes(key)) flags[key] = argv[++i]
     else throw new Error(`Unknown option ${a}`)
   }
   return flags
@@ -83,6 +95,14 @@ async function askAuth() {
   }
 }
 
+/** --review-concurrency: a whole number of 1 or more, or unset. */
+function reviewConcurrency(flags) {
+  if (flags['review-concurrency'] === undefined) return undefined
+  const n = Number(flags['review-concurrency'])
+  if (!Number.isInteger(n) || n < 1) throw new Error(`--review-concurrency needs a whole number of 1 or more, not "${flags['review-concurrency']}"`)
+  return n
+}
+
 function projectName(root) {
   try { return JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).name || basename(root) } catch { return basename(root) }
 }
@@ -92,6 +112,7 @@ async function main() {
   if (!command || command === 'help' || command === '--help' || command === '-h') { console.log(HELP); return 0 }
   if (command === '--version' || command === '-v') { console.log(PKG.version); return 0 }
   const flags = parseFlags(rest)
+  if (flags.help) { console.log(HELP); return 0 }
 
   switch (command) {
     case 'init': {
@@ -141,6 +162,7 @@ async function main() {
     }
     case 'run': {
       const config = project()
+      const concurrency = reviewConcurrency(flags)
       const files = flags.all ? allSpecs(config) : flags._.map(a => resolveSpecArg(a, config))
       if (!files.length) {
         throw new Error(flags.all
@@ -152,7 +174,20 @@ async function main() {
       const results = await runMany(files, config, {
         base, review: !flags['no-review'], headed: Boolean(flags.headed),
         maxTurns: flags['max-turns'] ? Number(flags['max-turns']) : undefined,
+        freshSignIn: Boolean(flags['fresh-sign-in']), reviewConcurrency: concurrency,
       })
+      return results.every(r => r.result === 'pass') ? 0 : 1
+    }
+    case 'review': {
+      const config = project()
+      const concurrency = reviewConcurrency(flags)
+      const dirs = selectRuns(config, { latest: Boolean(flags.latest), unreviewed: Boolean(flags.unreviewed), args: flags._ })
+      if (!dirs.length) {
+        if (flags.unreviewed) { console.log('Nothing to review: every run has a verdict.'); return 0 }
+        if (flags.latest) { console.log(`No runs in ${relative(process.cwd(), config.runsDir) || '.'} yet. Run "npx affidavit run --all" first.`); return 0 }
+        throw new Error('Name run folders, or pass --latest or --unreviewed')
+      }
+      const results = await reviewRuns(dirs, config, { reviewConcurrency: concurrency })
       return results.every(r => r.result === 'pass') ? 0 : 1
     }
     case 'ledger': {

@@ -2,6 +2,7 @@
 // the config's envFiles or the environment).
 
 export const DEFAULT_MODEL = 'anthropic/claude-sonnet-5'
+export const DEFAULT_CONCURRENCY = 4
 
 export async function chat({ model, system, content, maxTokens = 4000 }) {
   const key = process.env.OPENROUTER_API_KEY

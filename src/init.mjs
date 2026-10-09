@@ -2,7 +2,7 @@
 // Init never overwrites a file that already exists, and says what it did.
 
 import { execFileSync } from 'node:child_process'
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
@@ -10,6 +10,7 @@ import { CONFIG_FILE } from './config.mjs'
 import { roleKey } from './env.mjs'
 import { PRESETS } from './presets.mjs'
 import { allSpecs, loadSpec } from './run.mjs'
+import { SESSIONS_DIR, STATE_DIR } from './session.mjs'
 
 const PKG = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -138,7 +139,8 @@ export function init(root, { preset, auth = true, baseUrl } = {}) {
 
   const ignore = join(root, '.gitignore')
   const lines = existsSync(ignore) ? readFileSync(ignore, 'utf8').split('\n').map(l => l.trim()) : []
-  const add = ['qa/runs/', '.env.qa.local'].filter(l => !lines.includes(l) && !(existsSync(join(root, '.git')) && gitignored(root, l.replace(/\/$/, '/x'))))
+  // .affidavit/ holds saved sign-in sessions: live cookies, never committed.
+  const add = ['qa/runs/', '.env.qa.local', '.affidavit/'].filter(l => !lines.includes(l) && !(existsSync(join(root, '.git')) && gitignored(root, l.replace(/\/$/, '/x'))))
   if (add.length) {
     appendFileSync(ignore, `${lines.length && lines.at(-1) !== '' ? '\n' : ''}# Affidavit (visual QA)\n${add.join('\n')}\n`)
     done.push(`added ${add.join(', ')} to .gitignore`)
@@ -208,6 +210,29 @@ export function rolesCheck(config) {
     : { ok: false, detail: `no ${prefix}<ROLE>_EMAIL / _PASSWORD found in ${config.envFiles.join(', ')}; or set "auth": {"type": "none"} if the app has no sign-in` }
 }
 
+/**
+ * Saved sign-in sessions are live cookies: they must be gitignored and
+ * readable by the owner only. Reported whenever sessions are in use, so a
+ * project that upgraded without running `init` again hears about it before
+ * its first session is written. Null when the feature is off.
+ */
+export function sessionsCheck(config) {
+  if (config.reuseSession === false || config.auth?.type === 'none') return null
+  const dir = join(config.root, SESSIONS_DIR)
+  const files = existsSync(dir) ? readdirSync(dir).filter(f => f.endsWith('.json')) : []
+  const git = existsSync(join(config.root, '.git'))
+  if (!files.length) {
+    const selfIgnored = existsSync(join(config.root, STATE_DIR, '.gitignore'))
+    return { ok: true, detail: `none saved yet; they go to ${SESSIONS_DIR}, which ${selfIgnored || !git ? 'gitignores itself' : 'will gitignore itself'} (owner-readable only)` }
+  }
+  const open = process.platform === 'win32' ? [] : files.filter(f => (statSync(join(dir, f)).mode & 0o077) !== 0)
+  const tracked = git && !gitignored(config.root, `${SESSIONS_DIR}/${files[0]}`)
+  const what = `${files.length} saved sign-in session${files.length === 1 ? '' : 's'} in ${SESSIONS_DIR}`
+  if (tracked) return { ok: false, detail: `${what} are not gitignored: restore ${STATE_DIR}/.gitignore (containing "*") or add "${STATE_DIR}/" to .gitignore (they hold live sign-in cookies)` }
+  if (open.length) return { ok: true, warn: true, detail: `${what}; ${open.join(', ')} readable by others (chmod 600 them, or delete them to be re-saved)` }
+  return { ok: true, detail: `${what} (gitignored, owner-readable only); delete the folder to sign in fresh` }
+}
+
 /** Everything a run needs, checked without running anything that writes. */
 export async function doctor(config) {
   const checks = []
@@ -242,6 +267,9 @@ export async function doctor(config) {
 
   const roles = rolesCheck(config)
   ;(roles.ok ? ok : bad)('roles', roles.detail)
+
+  const sessions = sessionsCheck(config)
+  if (sessions) (sessions.ok ? (sessions.warn ? warn : ok) : bad)('sessions', sessions.detail)
 
   try {
     const res = await fetch(config.baseUrl, { redirect: 'follow', signal: AbortSignal.timeout(5000) })

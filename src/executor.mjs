@@ -4,7 +4,8 @@
 
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { perform, settle, signInSteps } from './browser.mjs'
+import { loginFormVisible, onLoginPath, perform, settle, signInSteps, textVisible } from './browser.mjs'
+import { saveSession } from './session.mjs'
 import { ACTION_VOCABULARY, parseAction } from './spec.mjs'
 import { chat } from './backends/index.mjs'
 import { image, parseJson, text } from './backends/parts.mjs'
@@ -16,36 +17,126 @@ async function shoot(page, dir, n) {
   return { file, png }
 }
 
-async function runOne(page, ctx, dir, n, step) {
-  const actions = []
-  let status = 'done'
-  let error
-  for (const action of step.actions) {
+/** Performs actions in order; stops at the first one that could not be done. */
+async function performAll(page, ctx, steps, actions) {
+  for (const action of steps) {
     const res = await perform(page, ctx, action)
     actions.push({ text: action.text, ok: res.ok, note: res.note })
-    if (!res.ok) { status = 'blocked'; error = res.note; break }
+    if (!res.ok) return res.note
   }
+  return null
+}
+
+async function runOne(page, ctx, dir, n, step) {
+  const actions = []
+  const error = await performAll(page, ctx, step.actions, actions)
   await settle(page)
   const shot = await shoot(page, dir, n)
-  return { n, title: step.title, actions, expect: step.expect, status, error, screenshot: shot.file, png: shot.png, url: page.url() }
+  return { n, title: step.title, actions, expect: step.expect, status: error ? 'blocked' : 'done', error: error ?? undefined, screenshot: shot.file, png: shot.png, url: page.url() }
 }
 
-/** Step 0: sign in and open the start page, so every run begins the same way. */
-async function setup(page, ctx, dir, spec, creds) {
-  const actions = signInSteps(ctx.auth, creds, spec.start, ctx.timeouts.signIn)
-  if (!actions.length) return null
-  return runOne(page, ctx, dir, 0, {
-    title: creds ? `Sign in as ${spec.role}${spec.start ? ` and open ${spec.start}` : ''}` : `Open ${spec.start}`,
-    actions,
-    expect: [creds ? 'The app is shown signed in — no login form is visible.' : 'The page opens.'],
-  })
+const openAction = path => ({ kind: 'open', path, text: `open "${path}"` })
+
+/**
+ * Step 0: sign in and open the start page, so every run begins the same way.
+ *
+ * With a saved session for the role the browser starts from it, but never
+ * trusts it blindly: the absence of a sign-in form proves nothing on a public
+ * start page. The session counts as live only on positive evidence, most
+ * reliable first:
+ *   1. `auth.signedInText` (if configured) is on screen after opening the start page;
+ *   2. otherwise, opening `auth.loginPath` sends the browser away from it.
+ *      A sign-in form showing there means the session has expired: sign in
+ *      right there. Neither a redirect nor a form means it cannot be confirmed.
+ *   3. when nothing confirms it, sign in again from a fresh browser context
+ *      (nothing stored, whatever the app keeps its session in). Erring toward
+ *      a fresh sign-in costs seconds; the other way, a wrong verdict under a
+ *      report that says "signed in".
+ * Either way step 0 stays in the report with a screenshot, so the reviewer
+ * sees the app signed in (or not), and the action notes say which path it took.
+ *
+ * Returns the record and the page to continue on (a new one after a fresh
+ * context), or null when there is nothing to do before the first step.
+ */
+export async function signInStep(page, ctx, dir, spec, creds, session) {
+  if (!creds) {
+    if (!spec.start) return null
+    return { page, record: await runOne(page, ctx, dir, 0, { title: `Open ${spec.start}`, actions: [openAction(spec.start)], expect: ['The page opens.'] }) }
+  }
+  const { auth } = ctx
+  const wait = ctx.timeouts.sessionCheck ?? 1000
+  const actions = []
+  let error = null
+  let reused = false
+  let onLoginPage = false
+  let opened = false // the start page is already open
+  if (session?.saved) {
+    if (auth.signedInText) {
+      error = await performAll(page, ctx, [openAction(spec.start || '/')], actions)
+      if (!error) {
+        await settle(page)
+        opened = true
+        if (await textVisible(page, auth.signedInText, wait)) {
+          reused = true
+          actions.at(-1).note = `"${auth.signedInText}" is on screen: still signed in as ${spec.role} from the saved session`
+        } else {
+          actions.at(-1).note = `"${auth.signedInText}" is not on screen, so the saved ${spec.role} session is not trusted; signing in again`
+        }
+      }
+    } else if (auth.type === 'form' && auth.loginPath) {
+      error = await performAll(page, ctx, [openAction(auth.loginPath)], actions)
+      if (!error) {
+        await settle(page)
+        if (await loginFormVisible(page, auth, wait)) {
+          onLoginPage = true
+          actions.at(-1).note = `the sign-in screen appeared: the saved ${spec.role} session had expired, so the browser signs in again`
+        } else if (!onLoginPath(page.url(), auth.loginPath, ctx.base)) {
+          reused = true
+          actions.at(-1).note = `sent away from the sign-in page: still signed in as ${spec.role} from the saved session`
+        } else {
+          actions.at(-1).note = `neither the sign-in form nor a redirect: the saved ${spec.role} session cannot be confirmed, so the browser signs in again`
+        }
+      }
+    }
+    // No marker and no login page to probe: nothing can confirm the session, so sign in again.
+  }
+  if (!error && !reused) {
+    // A saved session the app would not confirm is dropped before signing in
+    // again: a fresh context, or the app may show the signed-in page where
+    // the form should be.
+    if (session?.saved && !onLoginPage && ctx.fresh) page = await ctx.fresh(page)
+    error = await performAll(page, ctx, signInSteps(auth, creds, spec.start, ctx.timeouts.signIn, { onLoginPage }), actions)
+    if (!error && session) await saveSession(page, session)
+  } else if (!error && reused && spec.start && !opened) {
+    error = await performAll(page, ctx, [openAction(spec.start)], actions)
+  }
+  await settle(page)
+  const shot = await shoot(page, dir, 0)
+  const start = spec.start ? (reused ? `, open ${spec.start}` : ` and open ${spec.start}`) : ''
+  const record = {
+    n: 0,
+    title: reused ? `Signed in as ${spec.role} (saved session)${start}` : `Sign in as ${spec.role}${start}`,
+    actions, expect: ['The app is shown signed in — no login form is visible.'],
+    status: error ? 'blocked' : 'done', error: error ?? undefined, screenshot: shot.file, png: shot.png, url: page.url(),
+  }
+  return { page, record }
 }
 
-/** @param {{ page, ctx, dir, spec, creds, log }} args */
-export async function runScripted({ page, ctx, dir, spec, creds, log }) {
+/**
+ * Apps that rotate their tokens during use would leave the copy saved at
+ * sign-in stale early; the state at the end of a signed-in run is freshest.
+ */
+async function refreshSession(page, session, records) {
+  if (session && records[0]?.status === 'done') await saveSession(page, session)
+}
+
+/** @param {{ page, ctx, dir, spec, creds, session, log }} args */
+export async function runScripted({ page, ctx, dir, spec, creds, session, log }) {
   const records = []
-  const first = await setup(page, ctx, dir, spec, creds)
-  if (first) {
+  const setup = await signInStep(page, ctx, dir, spec, creds, session)
+  if (setup) {
+    page = setup.page
+    const first = setup.record
     records.push(first)
     log(`  0. ${first.title} — ${first.status}${first.error ? `: ${first.error}` : ''}`)
     if (first.status !== 'done') return records
@@ -59,6 +150,7 @@ export async function runScripted({ page, ctx, dir, spec, creds, log }) {
     log(`  ${n}. ${step.title} — ${rec.status}${rec.error ? `: ${rec.error}` : ''}`)
     blocked = rec.status === 'blocked'
   }
+  await refreshSession(page, session, records)
   return records
 }
 
@@ -83,14 +175,16 @@ Reply with JSON only, one of:
 {"done": true, "summary": "what on screen shows the goal is complete"}
 {"stuck": true, "reason": "what you looked for and could not find"}`
 
-/** @param {{ page, ctx, dir, spec, creds, log, backend, maxTurns }} args */
-export async function runExplore({ page, ctx, dir, spec, creds, log, backend, maxTurns }) {
+/** @param {{ page, ctx, dir, spec, creds, session, log, backend, maxTurns }} args */
+export async function runExplore({ page, ctx, dir, spec, creds, session, log, backend, maxTurns }) {
   const records = []
   const usage = { costUsd: 0, calls: 0 }
   let current = null
 
-  const first = await setup(page, ctx, dir, spec, creds)
-  if (first) {
+  const setup = await signInStep(page, ctx, dir, spec, creds, session)
+  if (setup) {
+    page = setup.page
+    const first = setup.record
     records.push(first)
     log(`  0. ${first.title} — ${first.status}${first.error ? `: ${first.error}` : ''}`)
     if (first.status !== 'done') return { records, outcome: { stuck: true, reason: first.error }, usage }
@@ -153,5 +247,6 @@ export async function runExplore({ page, ctx, dir, spec, creds, log, backend, ma
     history.push(`${turn}. ${action.text} — ${rec.status === 'done' ? 'ok' : `FAILED: ${rec.error}`}${tries > 1 ? ` (you have now done this ${tries} times — if it did not help, look somewhere else)` : ''}`)
     log(`  ${rec.n}. ${rec.title} → ${action.text} — ${rec.status}${rec.error ? `: ${rec.error}` : ''}`)
   }
+  await refreshSession(page, session, records)
   return { records, outcome, usage }
 }

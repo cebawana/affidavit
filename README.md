@@ -79,11 +79,54 @@ machine: run `npx affidavit …` from the project root.
 | `init [--no-auth] [--preset next\|vite\|none] [--base-url <url>]` | Writes `affidavit.config.json`, `qa/specs/_example.qa.md`, the skill in `.claude/skills/affidavit/`, and gitignore lines; with a sign-in, also `.env.qa.example`. Asks "Does the app need a sign-in?" in a terminal; `--no-auth` answers for scripts and agents. Never overwrites a file. |
 | `doctor` | Checks the browser, the reviewer backend, the roles your specs sign in as, and that the app answers: it shows the final URL and page title, so the wrong app on the port is obvious. |
 | `check [spec…]` | Parses specs without running them; reports every problem at once, with a "did you mean" for an action or front-matter key it cannot read. |
-| `run <spec…> \| --all` | Runs specs by path or id. `--no-review` (screenshots only), `--headed`, `--base <url>`, `--max-turns <n>`. Exits non-zero unless every spec passes. |
+| `run <spec…> \| --all` | Runs specs by path or id. The browser captures one spec after another; reviews run from a queue alongside it. `--no-review` (screenshots only), `--headed`, `--base <url>`, `--max-turns <n>`, `--review-concurrency <n>`, `--fresh-sign-in`. Exits non-zero unless every spec passes. |
+| `review <run…> \| --latest \| --unreviewed` | Reviews runs that already exist, without the browser: after a rate limit or a timeout, with another backend or model, or a whole suite captured with `--no-review`. `--latest` is every spec's latest run; `--unreviewed` every run without a verdict. Rewrites `report.html` and `result.json`; the screenshots are untouched. |
 | `ledger` | Builds one page with every spec's latest result, history, reviewer findings and screenshots (embedded, compressed). `--notes notes.md` adds your own panels; `--links` links screenshots instead; `--out`, `--title`. |
 
 Each run writes `qa/runs/<time>-<id>/` with `report.html`, `result.json` and
-one `step-NN.png` per step.
+one `step-NN.png` per step. `result.json` carries the verdict, the spec's
+criteria as they were at capture time, and `timings` (`browserMs`, `queuedMs`,
+`reviewMs`), so a run can be reviewed again later and the time split measured.
+
+### Fast suites
+
+Capture and review are pipelined: as soon as the browser finishes a spec it
+hands the run to a review queue and starts the next spec. Reviews run from the
+queue, several at once (`backend.concurrency`, default 2 for `claude-cli` and
+4 for `openrouter`), while capture continues. Reviews only read screenshots
+that already exist, so they can never change what the browser does: a
+pipelined run captures exactly what a sequential one would.
+
+A rate limit from the reviewer is never a verdict. It is retried with growing
+waits (15 s, 30 s, 60 s), and if it persists the run is recorded as
+`not_reviewed` with the reason. The summary lists the runs left unreviewed and
+the command that finishes them:
+
+```bash
+npx affidavit review --unreviewed
+```
+
+The same command finishes a suite captured with `run --all --no-review`, and
+`review --latest` re-judges every spec's latest run, for example after
+switching the backend or the model.
+
+Signing in is saved per role. After a sign-in, the browser's session is kept
+in `.affidavit/sessions/`, readable by you only, in a folder that gitignores
+itself (`.affidavit/.gitignore` holds `*`, so upgrading projects are covered
+without running `init` again; `init` adds a root line too and `doctor` checks).
+The next spec of that role starts from it. The session is
+trusted only on positive evidence, because a missing login form proves nothing
+on a public page: with `auth.signedInText` set (text only a signed-in user
+sees, such as "Sign out"), it must be on screen; otherwise the browser opens
+`auth.loginPath` and must be sent away from it. A sign-in form there means the
+session expired, so it signs in right there and refreshes the saved copy. When
+nothing confirms it, the browser signs in again from a fresh context with
+nothing stored, whatever the app keeps its session in (if your app shows the
+signed-in page at the login URL instead of redirecting, set `signedInText` so
+every spec after the first can skip the sign-in). Step 0 stays in the report
+either way, with notes saying which path it took. `--fresh-sign-in` ignores
+saved sessions for one run; `"reuseSession": false` turns the feature off;
+deleting `.affidavit/sessions/` forgets every session.
 
 ## Writing a spec
 
@@ -159,19 +202,22 @@ looked up and any `role` is only a label shown in the report.
     "loginPath": "/login",
     "fields": { "email": "Email", "password": "Password" },
     "submit": "Sign in",
-    "doneWhenGone": "Email"
+    "doneWhenGone": "Email",
+    "signedInText": "Sign out"
   },
-  "backend": { "name": "claude-cli", "model": "sonnet" },
+  "backend": { "name": "claude-cli", "model": "sonnet", "concurrency": 2 },
+  "reuseSession": true,
   "leakTerms": ["postgres", "/\\btenant_id\\b/"],
   "hide": [],
-  "timeouts": { "find": 15000, "gone": 20000, "signIn": 90000 },
+  "timeouts": { "find": 15000, "gone": 20000, "signIn": 90000, "sessionCheck": 1000 },
   "allowRemote": false
 }
 ```
 
 - **auth**: the labels on *your* login screen. `"type": "none"` means the app
   has no sign-in: credentials are never looked up, `doctor` reports "no sign-in
-  needed", and a role is only a label.
+  needed", and a role is only a label. `signedInText` is optional: text only a
+  signed-in user sees, used to confirm a saved session.
 - **defaultRole**: used by specs that leave `role` out. Unset by default on
   purpose: in an app with a login, a spec that forgot its role would otherwise
   run signed out without anyone noticing. `init --no-auth` sets it to `"none"`.
@@ -180,13 +226,20 @@ looked up and any `role` is only a label shown in the report.
   shows while recompiling (always reported).
 - **backend**: `claude-cli` (default; your signed-in plan, no API key) or
   `openrouter` (`OPENROUTER_API_KEY`). `reviewModel` / `exploreModel` split them.
-  A backend is one file in `src/backends/`.
+  `concurrency` is how many reviews run at once while the browser captures the
+  next spec; unset means the backend's own default. A backend is one file in
+  `src/backends/`.
+- **reuseSession**: save the signed-in session per role and reuse it on the
+  next spec of that role (default on). The session counts only when
+  `signedInText` is on screen or the login page sends the browser away;
+  otherwise it signs in again.
 - **leakTerms**: words a spec may not contain in this project; `/regex/` works.
 - **allowRemote**: Affidavit signs in and writes data, so it refuses non-local
   hosts unless this is set.
 
 Environment overrides use the prefix: `QA_BASE_URL`, `QA_BACKEND`, `QA_MODEL`,
-`QA_REVIEW_MODEL`, `QA_EXPLORE_MODEL`, `QA_LOCALE`, `QA_ALLOW_REMOTE=1`.
+`QA_REVIEW_MODEL`, `QA_EXPLORE_MODEL`, `QA_REVIEW_CONCURRENCY`, `QA_LOCALE`,
+`QA_ALLOW_REMOTE=1`.
 
 ## With Claude Code
 
@@ -198,8 +251,9 @@ a pass. If your `.gitignore` excludes `.claude/`, init tells you how to let
 
 ## Status
 
-v0.1, early, [on npm](https://www.npmjs.com/package/affidavit). Planned: reusing the
-browser session per role between runs, more framework presets, Codex / local-model backends, and a Claude Code plugin package.
+v0.3, early, [on npm](https://www.npmjs.com/package/affidavit). Planned: parallel
+browsers with `--workers`, more framework presets, Codex / local-model backends,
+and a Claude Code plugin package.
 
 ## Contributing
 

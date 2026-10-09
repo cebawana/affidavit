@@ -3,35 +3,14 @@
 // embedded (compressed to JPEG by the same Chrome that took them), so the page
 // can be shared on its own; --links references the local files instead.
 
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join, relative } from 'node:path'
 import { chromium } from 'playwright-core'
-import { allSpecs, loadSpec } from './run.mjs'
+import { allSpecs, collectRuns, loadSpec } from './run.mjs'
 import { RESULT_LABEL, esc } from './report.mjs'
 
 const HISTORY = 12
 const ORDER = { fail: 0, error: 0, blocked: 1, needs_human: 2, not_reviewed: 3, not_run: 4, pass: 5 }
-
-/** "20260928-091438-finance-phone" → Date (the folder stamp is UTC). */
-function stampDate(name) {
-  const m = name.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-/)
-  return m ? new Date(Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6])) : null
-}
-
-export function collectRuns(config) {
-  if (!existsSync(config.runsDir)) return []
-  const runs = []
-  for (const name of readdirSync(config.runsDir)) {
-    const dir = join(config.runsDir, name)
-    const file = join(dir, 'result.json')
-    if (!existsSync(file)) continue
-    let json
-    try { json = JSON.parse(readFileSync(file, 'utf8')) } catch { continue }
-    const startedAt = json.startedAt ? new Date(json.startedAt) : stampDate(name) ?? statSync(file).mtime
-    runs.push({ ...json, dir, startedAt })
-  }
-  return runs.sort((a, b) => a.startedAt - b.startedAt)
-}
 
 export function buildLedgerModel(config) {
   const runs = collectRuns(config)
