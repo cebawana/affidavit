@@ -18,7 +18,7 @@ import { overall, review } from './reviewer.mjs'
 import { renderReport } from './report.mjs'
 import { concurrencyFor } from './backends/index.mjs'
 import { createQueue, isRateLimit, withRetry } from './queue.mjs'
-import { sessionFor } from './session.mjs'
+import { saveSession, sessionFor } from './session.mjs'
 
 const stamp = d => d.toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-')
 // No 0/o, 1/l/i: the reviewer reads this id off a screenshot.
@@ -95,6 +95,9 @@ export async function captureSpec(file, config, opts, log = console.log) {
     } else {
       ({ records, outcome, usage } = await runExplore({ page, ctx, dir, spec, creds, session, log, backend: config.backend, maxTurns: opts.maxTurns ?? config.maxTurns }))
     }
+    // Apps that rotate their tokens during use would leave the copy saved at
+    // sign-in stale early; the state at the end of a signed-in run is freshest.
+    if (session && records[0]?.status === 'done') await saveSession(page, session)
   } finally {
     await browser.close()
   }
@@ -123,6 +126,8 @@ export async function captureSpec(file, config, opts, log = console.log) {
  * Reviews a run and rewrites its report and result.json. A rate limit is the
  * backend asking us to wait, not a verdict: it is retried with growing waits
  * and, if it persists, recorded as not_reviewed with the reason. Never fail.
+ * A verdict reached earlier is never discarded by a review that failed: the
+ * run keeps it, with the error recorded beside it.
  *
  * @param {{ log?, reviewer?, delays?, sleep? }} [opts] reviewer/delays/sleep are for tests
  */
@@ -131,6 +136,7 @@ export async function reviewRun(run, config, opts = {}) {
   const reviewer = opts.reviewer ?? review
   const delays = opts.delays ?? RETRY_DELAYS
   const { spec, records, outcome, today } = run
+  const previous = run.verdict
   const t0 = Date.now()
   try {
     run.verdict = await withRetry(() => reviewer({ spec, records, outcome, today, backend: config.backend }), {
@@ -138,16 +144,19 @@ export async function reviewRun(run, config, opts = {}) {
       onRetry: (err, wait, n, of) => log(`  ⏳ ${spec.id}: the reviewer is rate limited (${String(err.message).split('\n')[0]}); retrying in ${seconds(wait)} (${n}/${of})`),
     })
     run.reviewError = null
+    run.reviewedAt = new Date()
   } catch (err) {
-    run.verdict = null
+    run.verdict = previous
     run.reviewError = String(err.message ?? err).split('\n')[0]
   }
-  run.reviewedAt = new Date()
   run.timings.reviewMs = Date.now() - t0
   run.result = overall(records, run.verdict, outcome)
   writeRun(run)
   const took = [run.timings.browserMs != null && `browser ${seconds(run.timings.browserMs)}`, `review ${seconds(run.timings.reviewMs)}`].filter(Boolean).join(' · ')
-  log(`  ${run.result.toUpperCase().padEnd(12)} ${spec.id} → ${relative(config.root, join(run.dir, 'report.html'))}  [${took}]${run.reviewError ? `\n    ! not reviewed: ${run.reviewError}` : ''}`)
+  const problem = !run.reviewError ? ''
+    : previous ? `\n    ! this review failed: ${run.reviewError}; the earlier verdict${run.reviewedAt ? ` from ${run.reviewedAt.toLocaleString()}` : ''} is kept`
+    : `\n    ! not reviewed: ${run.reviewError}`
+  log(`  ${run.result.toUpperCase().padEnd(12)} ${spec.id} → ${relative(config.root, join(run.dir, 'report.html'))}  [${took}]${problem}`)
   return run
 }
 
@@ -158,7 +167,7 @@ export function writeRun(run) {
   writeFileSync(join(run.dir, 'report.html'), renderReport({
     spec, runId: run.runId, startedAt: run.startedAt.toLocaleString(), base: run.base, records,
     verdict: run.verdict, result: run.result, outcome: run.outcome, usage: run.usage, notes, recordedSpec: run.recordedSpec,
-    reviewError: run.reviewError, timings: run.timings,
+    reviewError: run.reviewError, reviewedAt: run.reviewedAt ? run.reviewedAt.toLocaleString() : null, timings: run.timings,
   }))
   writeFileSync(join(run.dir, 'result.json'), JSON.stringify({
     affidavit: RESULT_FORMAT,
@@ -267,7 +276,10 @@ const summarize = run => ({ file: basename(run.spec.file), id: run.spec.id, run:
 function printSummary(results, log, { reviewed = true, showRun = false } = {}) {
   if (results.length > 1) {
     log('\nSummary')
-    for (const r of results) log(`  ${r.result.padEnd(12)} ${r.file}${showRun && r.run ? `  ${r.run}` : ''}${r.reviewError ? `  (not reviewed: ${r.reviewError})` : ''}`)
+    for (const r of results) {
+      const problem = !r.reviewError ? '' : r.result === 'not_reviewed' ? `  (not reviewed: ${r.reviewError})` : `  (this review failed: ${r.reviewError}; earlier verdict kept)`
+      log(`  ${r.result.padEnd(12)} ${r.file}${showRun && r.run ? `  ${r.run}` : ''}${problem}`)
+    }
   }
   const left = results.filter(r => r.result === 'not_reviewed')
   if (!left.length) return

@@ -14,7 +14,7 @@ export const RESULT_LABEL = {
 const VERDICT = { pass: 'ok', fail: 'bad', unclear: 'warn' }
 const pill = (label, tone) => `<span class="pill ${tone}">${esc(label)}</span>`
 
-export function renderReport({ spec, runId, startedAt, base, records, verdict, result, outcome, usage, notes, recordedSpec, reviewError = null, timings = null }) {
+export function renderReport({ spec, runId, startedAt, base, records, verdict, result, outcome, usage, notes, recordedSpec, reviewError = null, reviewedAt = null, timings = null }) {
   const byStep = new Map((verdict?.steps ?? []).map(s => [Number(s.n), s]))
   const [resultLabel, resultTone] = RESULT_LABEL[result] ?? [result, 'mute']
   const cost = [usage?.costUsd, verdict?.costUsd].filter(v => typeof v === 'number').reduce((a, b) => a + b, 0)
@@ -83,7 +83,8 @@ a{color:var(--accent)}details{margin-top:28px}pre{white-space:pre-wrap;backgroun
   </div>
   <div>${pill(resultLabel, `${resultTone} big`)}</div>
 </div>
-${reviewError ? `<p class="meta"><span class="pill warn">Not reviewed</span> The reviewer could not run: ${esc(reviewError)}. The screenshots are kept; <code>npx affidavit review --unreviewed</code> finishes this run.</p>` : ''}
+${reviewError && !verdict ? `<p class="meta"><span class="pill warn">Not reviewed</span> The reviewer could not run: ${esc(reviewError)}. The screenshots are kept; <code>npx affidavit review --unreviewed</code> finishes this run.</p>` : ''}
+${reviewError && verdict ? `<p class="meta"><span class="pill warn">Re-review failed</span> ${esc(reviewError)}. The verdict shown is the earlier one${reviewedAt ? ` from ${esc(reviewedAt)}` : ''}.</p>` : ''}
 <p class="meta">Visual-only review: the reviewer saw the spec and these screenshots, nothing else. ${verdict?.model ? `Reviewer model <code>${esc(verdict.model)}</code>.` : ''} ${cost ? `Model cost $${cost.toFixed(4)}.` : ''} ${took ? `Took ${esc(took)}.` : ''}</p>
 ${criteria ? `<h2>Success criteria</h2><table>${criteria}</table>` : ''}
 ${signals ? `<h2>Failure signals</h2><table>${signals}</table>` : ''}

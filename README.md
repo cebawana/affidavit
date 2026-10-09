@@ -111,12 +111,19 @@ The same command finishes a suite captured with `run --all --no-review`, and
 switching the backend or the model.
 
 Signing in is saved per role. After a sign-in, the browser's session is kept
-in `qa/runs/.sessions/` (gitignored with the runs) and the next spec of that
-role starts already signed in. Whether it still holds is decided by looking: the
-browser opens the start page and, if the sign-in screen shows, signs in again
-and refreshes the saved session. Step 0 stays in the report either way.
-`--fresh-sign-in` ignores saved sessions for one run; `"reuseSession": false`
-turns the feature off.
+in `.affidavit/sessions/` (gitignored by `init`, readable by you only; `doctor`
+checks both) and the next spec of that role starts from it. The session is
+trusted only on positive evidence, because a missing login form proves nothing
+on a public page: with `auth.signedInText` set (text only a signed-in user
+sees, such as "Sign out"), it must be on screen; otherwise the browser opens
+`auth.loginPath` and must be sent away from it. A sign-in form there means the
+session expired, so it signs in right there and refreshes the saved copy. When
+nothing confirms it, the browser forgets the session and signs in again (if
+your app shows the signed-in page at the login URL instead of redirecting, set
+`signedInText` so every spec after the first can skip the sign-in). Step 0 stays in the report
+either way, with notes saying which path it took. `--fresh-sign-in` ignores
+saved sessions for one run; `"reuseSession": false` turns the feature off;
+deleting `.affidavit/sessions/` forgets every session.
 
 ## Writing a spec
 
@@ -192,20 +199,22 @@ looked up and any `role` is only a label shown in the report.
     "loginPath": "/login",
     "fields": { "email": "Email", "password": "Password" },
     "submit": "Sign in",
-    "doneWhenGone": "Email"
+    "doneWhenGone": "Email",
+    "signedInText": "Sign out"
   },
   "backend": { "name": "claude-cli", "model": "sonnet", "concurrency": 2 },
   "reuseSession": true,
   "leakTerms": ["postgres", "/\\btenant_id\\b/"],
   "hide": [],
-  "timeouts": { "find": 15000, "gone": 20000, "signIn": 90000 },
+  "timeouts": { "find": 15000, "gone": 20000, "signIn": 90000, "sessionCheck": 1000 },
   "allowRemote": false
 }
 ```
 
 - **auth**: the labels on *your* login screen. `"type": "none"` means the app
   has no sign-in: credentials are never looked up, `doctor` reports "no sign-in
-  needed", and a role is only a label.
+  needed", and a role is only a label. `signedInText` is optional: text only a
+  signed-in user sees, used to confirm a saved session.
 - **defaultRole**: used by specs that leave `role` out. Unset by default on
   purpose: in an app with a login, a spec that forgot its role would otherwise
   run signed out without anyone noticing. `init --no-auth` sets it to `"none"`.
@@ -218,8 +227,9 @@ looked up and any `role` is only a label shown in the report.
   next spec; unset means the backend's own default. A backend is one file in
   `src/backends/`.
 - **reuseSession**: save the signed-in session per role and reuse it on the
-  next spec of that role (default on). The browser checks by looking for the
-  sign-in screen and signs in again when it shows.
+  next spec of that role (default on). The session counts only when
+  `signedInText` is on screen or the login page sends the browser away;
+  otherwise it signs in again.
 - **leakTerms**: words a spec may not contain in this project; `/regex/` works.
 - **allowRemote**: Affidavit signs in and writes data, so it refuses non-local
   hosts unless this is set.

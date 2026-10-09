@@ -283,8 +283,11 @@ test('vite server.port is read from the server block only', () => {
 import { createQueue, isRateLimit, withRetry } from '../src/queue.mjs'
 import { concurrencyFor } from '../src/backends/index.mjs'
 import { RESULT_FORMAT, collectRuns, loadRun, resolveRunArg, reviewRun, reviewRuns, runMany, selectRuns, writeRun } from '../src/run.mjs'
-import { sessionFor, sessionPath } from '../src/session.mjs'
-import { loginFormVisible } from '../src/browser.mjs'
+import { SESSIONS_DIR, saveSession, sessionFor, sessionPath } from '../src/session.mjs'
+import { loginFormVisible, onLoginPath } from '../src/browser.mjs'
+import { signInStep } from '../src/executor.mjs'
+import { sessionsCheck } from '../src/init.mjs'
+import { chmodSync, statSync } from 'node:fs'
 
 const tick = (ms = 5) => new Promise(r => setTimeout(r, ms))
 
@@ -448,7 +451,7 @@ test('reviewRun: a rate limit is retried, then recorded as not_reviewed with the
   assert.equal(blocked.result, 'blocked')
 })
 
-test('selectRuns: named folders, every spec\'s latest run, or the unreviewed ones; .sessions is ignored', async () => {
+test('selectRuns: named folders, every spec\'s latest run, or the unreviewed ones; other folders are ignored', async () => {
   const config = project()
   const a1 = fakeRun(config, { id: 'a', when: '2026-10-08T10:00:00.000Z' })
   const a2 = fakeRun(config, { id: 'a', when: '2026-10-08T11:00:00.000Z' })
@@ -519,10 +522,11 @@ test('runMany pipelines: the next capture starts while the last review runs, and
   assert.match(log2.join('\n'), /Screenshots only[\s\S]*review --unreviewed/)
 })
 
-test('a saved session is kept per role and account under the runs folder', () => {
+test('a saved session is kept per role and account outside the runs folder', () => {
   const config = project()
   const admin = sessionPath(config, 'admin', { email: 'admin@test' })
-  assert.equal(join(config.runsDir, '.sessions'), join(admin, '..'))
+  assert.equal(join(config.root, SESSIONS_DIR), join(admin, '..'))
+  assert.ok(!admin.startsWith(config.runsDir), 'live cookies never travel with a zipped or uploaded runs folder')
   assert.match(basename(admin), /^admin-[0-9a-f]{8}\.json$/)
   assert.notEqual(admin, sessionPath(config, 'admin', { email: 'other@test' }), 'a changed test account never reuses the old session')
   assert.equal(sessionPath(config, 'Team Lead', { email: 'x' }).includes('team-lead-'), true)
@@ -542,4 +546,177 @@ test('the sign-in screen is recognised by its text, so an expired session is not
   assert.equal(await loginFormVisible(fakePage(['Email', 'Password']), DEFAULTS.auth, 10), true)
   assert.equal(await loginFormVisible(fakePage(['Dashboard']), DEFAULTS.auth, 10), false)
   assert.equal(await loginFormVisible(fakePage(['Email']), { type: 'none' }, 10), false)
+})
+
+test('a failed re-review keeps the earlier verdict and records the error beside it', async () => {
+  const config = project()
+  const run = fakeRun(config)
+  await reviewRun(run, config, { log: () => {}, reviewer: async () => PASSING })
+  const reviewedAt = run.reviewedAt
+  const log = []
+  await reviewRun(run, config, { log: m => log.push(m), sleep: () => Promise.resolve(), delays: [1], reviewer: async () => { throw new Error('OpenRouter 429: rate limit') } })
+  assert.equal(run.result, 'pass', 'the pass is not lost')
+  assert.equal(run.verdict.summary, 'Fine.')
+  assert.match(run.reviewError, /rate limit/)
+  assert.equal(run.reviewedAt, reviewedAt, 'the verdict still dates from the review that reached it')
+  const json = JSON.parse(readFileSync(join(run.dir, 'result.json'), 'utf8'))
+  assert.equal(json.result, 'pass')
+  assert.match(json.reviewError, /rate limit/)
+  assert.match(log.join('\n'), /this review failed[\s\S]*earlier verdict.*is kept/)
+  assert.match(readFileSync(join(run.dir, 'report.html'), 'utf8'), /Re-review failed/)
+  assert.deepEqual(selectRuns(config, { unreviewed: true }), [], 'a run with a verdict is not "unreviewed"')
+})
+
+test('the sign-in page is recognised by path, whatever the query', () => {
+  assert.equal(onLoginPath('http://localhost:3000/login?next=%2Finvoices', '/login', 'http://localhost:3000'), true)
+  assert.equal(onLoginPath('http://localhost:3000/login/', '/login', 'http://localhost:3000'), true)
+  assert.equal(onLoginPath('http://localhost:3000/', '/login', 'http://localhost:3000'), false)
+  assert.equal(onLoginPath('http://localhost:3000/auth/sign-in', '/auth/sign-in', 'http://localhost:3000'), true)
+  assert.equal(signInSteps(DEFAULTS.auth, { email: 'a', password: 'b' }, '/x', 1000, { onLoginPage: true })[0].kind, 'fill', 'already on the form: no open')
+})
+
+/**
+ * A pretend app for step 0: "/" is public (a landing page), "/invoices" needs a
+ * sign-in, and "/login" sends a signed-in visitor to "/". The page object
+ * answers only what perform() and the session checks ask of it.
+ */
+function fakeApp({ token = 'one', session = null, loginPath = '/login', redirect = true } = {}) {
+  const st = { url: 'http://localhost:3000/blank', session, email: '', password: '' }
+  const signedIn = () => st.session === token
+  const path = () => new URL(st.url).pathname
+  const goto = async url => {
+    const u = new URL(url, 'http://localhost:3000')
+    if (u.pathname === loginPath && signedIn() && redirect) u.pathname = '/'
+    if (u.pathname === '/invoices' && !signedIn()) u.pathname = loginPath
+    st.url = u.toString()
+  }
+  const texts = () => {
+    const p = path()
+    if (p === loginPath) return signedIn() ? ['Dashboard', 'Sign out'] : ['Welcome back', 'Email', 'Password', 'Sign in']
+    if (p === '/') return signedIn() ? ['Dashboard', 'Sign out'] : ['Landing page', 'Pricing', 'Get started']
+    if (p === '/invoices') return ['Invoices', 'INV-0042', 'Sign out']
+    return []
+  }
+  const el = name => ({
+    filter: () => el(name), first: () => el(name), nth: () => el(name),
+    count: async () => (texts().includes(name) ? 1 : 0),
+    isDisabled: async () => false,
+    scrollIntoViewIfNeeded: async () => {},
+    fill: async v => { if (name === 'Email') st.email = v; if (name === 'Password') st.password = v },
+    click: async () => {
+      if (name === 'Sign in' && path() === loginPath && st.email === 'admin@test' && st.password === 'pw') { st.session = token; await goto('/') }
+    },
+  })
+  const none = { filter: () => none, count: async () => 0, first: () => none, nth: () => none }
+  const page = {
+    goto, url: () => st.url, reload: async () => {},
+    getByText: t => el(t), getByLabel: t => el(t), getByPlaceholder: () => none,
+    getByRole: (role, opts) => (role === 'dialog' || !opts?.name ? none : el(opts.name)),
+    waitForLoadState: async () => {}, screenshot: async () => PNG, keyboard: { press: async () => {} },
+    evaluate: async () => {},
+    context: () => ({
+      storageState: async () => ({ cookies: [{ name: 'session', value: st.session }], origins: [] }),
+      clearCookies: async () => { st.session = null; st.forgot = true },
+    }),
+  }
+  return { page, st }
+}
+
+const CREDS = { email: 'admin@test', password: 'pw' }
+const fastCtx = (auth = {}) => ({
+  base: 'http://localhost:3000', notFoundText: null,
+  timeouts: { find: 60, gone: 60, signIn: 60, sessionCheck: 30 },
+  auth: { ...DEFAULTS.auth, doneWhenGone: 'Welcome back', ...auth },
+})
+const notes = rec => rec.actions.map(a => a.text + (a.note ? ` (${a.note})` : '')).join(' ; ')
+
+test('a saved session is never trusted because the login form is merely absent', async () => {
+  // Expired session, public start page: the old code saw no form on "/" and
+  // called it signed in. Probing the login page shows the form, so it signs
+  // in right there, then opens the start page.
+  const dir = tmp()
+  const session = { path: join(dir, 's', 'admin-x.json'), saved: true }
+  const { page, st } = fakeApp({ token: 'new', session: 'old' })
+  const rec = await signInStep(page, fastCtx(), dir, { role: 'admin', start: '/' }, CREDS, session)
+  assert.equal(rec.status, 'done', rec.error)
+  assert.equal(rec.title, 'Sign in as admin and open /')
+  assert.match(notes(rec), /^open "\/login" \(the sign-in screen appeared: the saved admin session had expired.*\) ; fill "Email"/, 'signed in from the form that was already showing')
+  assert.equal(st.session, 'new', 'actually signed in')
+  assert.ok(existsSync(session.path), 'the saved session was refreshed')
+  assert.equal(JSON.parse(readFileSync(session.path, 'utf8')).cookies[0].value, 'new')
+  assert.equal(statSync(session.path).mode & 0o777, 0o600, 'owner-readable only')
+  assert.equal(statSync(join(dir, 's')).mode & 0o777, 0o700)
+})
+
+test('a live saved session is confirmed by the login page sending the browser away', async () => {
+  const dir = tmp()
+  const { page } = fakeApp({ token: 'one', session: 'one' })
+  const rec = await signInStep(page, fastCtx(), dir, { role: 'admin', start: '/invoices' }, CREDS, { path: join(dir, 'x.json'), saved: true })
+  assert.equal(rec.status, 'done')
+  assert.equal(rec.title, 'Signed in as admin (saved session), open /invoices')
+  assert.equal(notes(rec), 'open "/login" (sent away from the sign-in page: still signed in as admin from the saved session) ; open "/invoices"')
+  assert.equal(new URL(rec.url).pathname, '/invoices')
+})
+
+test('with signedInText the marker decides: on screen → reused, absent → fresh sign-in', async () => {
+  const dir = tmp()
+  const live = fakeApp({ token: 'one', session: 'one' })
+  let rec = await signInStep(live.page, fastCtx({ signedInText: 'Sign out' }), dir, { role: 'admin', start: '/' }, CREDS, { path: join(dir, 'a.json'), saved: true })
+  assert.equal(rec.title, 'Signed in as admin (saved session), open /')
+  assert.equal(notes(rec), 'open "/" ("Sign out" is on screen: still signed in as admin from the saved session)')
+
+  const expired = fakeApp({ token: 'one', session: 'old' })
+  rec = await signInStep(expired.page, fastCtx({ signedInText: 'Sign out' }), dir, { role: 'admin', start: '/' }, CREDS, { path: join(dir, 'b.json'), saved: true })
+  assert.equal(rec.status, 'done', rec.error)
+  assert.equal(rec.title, 'Sign in as admin and open /')
+  assert.match(notes(rec), /^open "\/" \("Sign out" is not on screen, so the saved admin session is not trusted; signing in again\) ; open "\/login" ; fill "Email"/)
+  assert.equal(expired.st.session, 'one')
+})
+
+test('an app that shows the signed-in page at the login URL: the session is forgotten and signed in afresh, not blocked', async () => {
+  const dir = tmp()
+  const app = fakeApp({ token: 'one', session: 'one', redirect: false })
+  const rec = await signInStep(app.page, fastCtx(), dir, { role: 'admin', start: '/invoices' }, CREDS, { path: join(dir, 'x.json'), saved: true })
+  assert.equal(rec.status, 'done', rec.error)
+  assert.equal(rec.title, 'Sign in as admin and open /invoices')
+  assert.match(notes(rec), /cannot be confirmed, so the browser signs in again\) ; open "\/login" ; fill "Email"/)
+  assert.equal(app.st.forgot, true)
+  assert.equal(app.st.session, 'one')
+})
+
+test('when nothing confirms a saved session the browser signs in again', async () => {
+  // The configured login page neither shows a form nor redirects (a wrong
+  // loginPath, say): unsure means a fresh sign-in, which then blocks on the
+  // same wrong page — a config problem, reported, never a silent signed-out run.
+  const dir = tmp()
+  const { page } = fakeApp({ token: 'one', session: 'one', loginPath: '/login' })
+  const rec = await signInStep(page, fastCtx({ loginPath: '/nowhere' }), dir, { role: 'admin', start: '/' }, CREDS, { path: join(dir, 'x.json'), saved: true })
+  assert.match(rec.title, /^Sign in as admin/)
+  assert.match(notes(rec), /neither the sign-in form nor a redirect: the saved admin session cannot be confirmed, so the browser signs in again/)
+  assert.equal(rec.status, 'blocked')
+  // No saved session at all: the plain sign-in, saved afterwards.
+  const fresh = fakeApp({ token: 'one' })
+  const session = { path: join(dir, 'fresh.json'), saved: false }
+  const first = await signInStep(fresh.page, fastCtx(), dir, { role: 'admin', start: '/invoices' }, CREDS, session)
+  assert.equal(first.status, 'done', first.error)
+  assert.equal(first.title, 'Sign in as admin and open /invoices')
+  assert.equal(session.saved, true)
+})
+
+test('doctor reports saved sessions that are world-readable or not gitignored', async () => {
+  const config = project()
+  assert.equal(sessionsCheck(config), null, 'nothing to say while none are saved')
+  const session = { path: sessionPath(config, 'admin', CREDS), saved: false }
+  await saveSession(fakeApp({ session: 'one', token: 'one' }).page, session)
+  assert.match(sessionsCheck(config).detail, /1 saved sign-in session in \.affidavit\/sessions \(gitignored, owner-readable only\)/)
+  chmodSync(session.path, 0o644)
+  const loose = sessionsCheck(config)
+  assert.equal(loose.warn, true)
+  assert.match(loose.detail, /readable by others/)
+})
+
+test('init gitignores the sessions folder', () => {
+  const root = tmp()
+  init(root, { auth: false })
+  assert.match(readFileSync(join(root, '.gitignore'), 'utf8'), /^\.affidavit\/$/m)
 })

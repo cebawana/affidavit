@@ -105,8 +105,10 @@ npx affidavit ledger                   # one page: every spec, latest result, hi
 Reviews run alongside the browser, so a suite takes about as long as its
 browser time. A rate limit from the reviewer is never a verdict: the run is
 recorded as `not_reviewed` with the reason, and `review --unreviewed` finishes
-it. Signing in is saved per role between specs; the browser notices an expired
-session by seeing the sign-in screen and signs in again.
+it. Signing in is saved per role between specs (in `.affidavit/sessions/`);
+a saved session is used only when the app visibly confirms it (the sign-in
+page sends the browser away, or `auth.signedInText` is on screen), otherwise
+the browser signs in again.
 
 The app's server must be running; `doctor` shows the title of the page at
 `baseUrl`, so check it is *this* app. Each run writes

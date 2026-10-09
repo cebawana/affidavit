@@ -112,6 +112,7 @@ async function main() {
   if (!command || command === 'help' || command === '--help' || command === '-h') { console.log(HELP); return 0 }
   if (command === '--version' || command === '-v') { console.log(PKG.version); return 0 }
   const flags = parseFlags(rest)
+  if (flags.help) { console.log(HELP); return 0 }
 
   switch (command) {
     case 'init': {

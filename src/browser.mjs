@@ -219,12 +219,16 @@ export async function perform(page, ctx, action) {
   }
 }
 
+/** Whether `text` is on screen, giving a client-side render or redirect up to `wait` ms to show it. */
+export async function textVisible(page, text, wait = 1000) {
+  return Boolean(await poll(async () => ((await page.getByText(text).filter({ visible: true }).count()) ? true : null), wait))
+}
+
 /**
  * Whether the sign-in screen is showing — judged the way a person would, by
  * the text on it (the field label that `doneWhenGone` waits for). A saved
  * session that lands here has expired. A client-side redirect to the login
- * page can take a moment, so this looks for a short while before saying no:
- * about a second per spec, against the sign-in it saves.
+ * page can take a moment, so this looks for a short while before saying no.
  */
 export async function loginFormVisible(page, auth, wait = 1000) {
   if (auth?.type !== 'form') return false
@@ -239,15 +243,37 @@ export async function loginFormVisible(page, auth, wait = 1000) {
 }
 
 /**
- * Signs in through the app's own login screen, as configured. The password is
- * masked in every log, report and reviewer prompt.
+ * Forgets the browser's cookies and storage, so a sign-in starts from nothing.
+ * Needed before signing in again over a saved session the app would not
+ * confirm: left in place, the app may show the signed-in page instead of the
+ * form. This resets the browser's own state; it reads nothing from the app.
  */
-export function signInSteps(auth, creds, start, signInTimeout) {
+export async function forgetSession(page) {
+  await page.context().clearCookies().catch(() => {})
+  await page.evaluate(() => { try { localStorage.clear(); sessionStorage.clear() } catch { /* opaque origin */ } }).catch(() => {})
+}
+
+/** Whether `url` is the sign-in page (path only; the query may carry a "next" target). */
+export function onLoginPath(url, loginPath, base) {
+  try {
+    const strip = p => p.replace(/\/+$/, '') || '/'
+    return strip(new URL(url).pathname) === strip(new URL(loginPath, base).pathname)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Signs in through the app's own login screen, as configured. The password is
+ * masked in every log, report and reviewer prompt. `onLoginPage` skips opening
+ * the login page when the form is already on screen.
+ */
+export function signInSteps(auth, creds, start, signInTimeout, { onLoginPage = false } = {}) {
   const steps = []
   if (creds && auth.type === 'form') {
     const { email, password } = auth.fields
+    if (!onLoginPage) steps.push({ kind: 'open', path: auth.loginPath, text: `open "${auth.loginPath}"` })
     steps.push(
-      { kind: 'open', path: auth.loginPath, text: `open "${auth.loginPath}"` },
       { kind: 'fill', target: email, value: creds.email, text: `fill "${email}" with "${creds.email}"` },
       { kind: 'fill', target: password, value: creds.password, text: `fill "${password}" with "••••••••"` },
       { kind: 'click', target: auth.submit, text: `click "${auth.submit}"` },

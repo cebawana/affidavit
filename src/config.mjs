@@ -31,6 +31,10 @@ export const DEFAULTS = {
     submit: 'Sign in',
     // Text that disappears once signed in. Defaults to the email field's label.
     doneWhenGone: null,
+    // Text only a signed-in user sees ("Sign out", the account's name). When
+    // set, a saved session counts as live only if this is on screen; without
+    // it, the browser probes loginPath and must be sent away from it.
+    signedInText: null,
   },
   // `concurrency`: how many reviews run at once while the browser captures the
   // next spec; unset means the backend's own default (see src/backends/).
@@ -41,7 +45,8 @@ export const DEFAULTS = {
   reuseSession: true,
   leakTerms: [],
   hide: [],
-  timeouts: { find: 15000, gone: 20000, signIn: 90000 },
+  // sessionCheck: how long a saved session's sign-in screen or marker gets to appear.
+  timeouts: { find: 15000, gone: 20000, signIn: 90000, sessionCheck: 1000 },
   allowRemote: false,
   maxTurns: 25,
 }
