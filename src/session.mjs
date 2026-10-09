@@ -15,7 +15,7 @@
 
 import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 
 export const STATE_DIR = '.affidavit'
 
@@ -42,11 +42,19 @@ export function ensureStateDir(root) {
   return dir
 }
 
+/** The project root a session path belongs to, when it sits in <root>/.affidavit/sessions/. */
+function rootOf(session) {
+  if (session.root) return session.root
+  const dir = dirname(session.path)
+  return basename(dir) === 'sessions' && basename(dirname(dir)) === STATE_DIR ? resolve(dir, '..', '..') : null
+}
+
 /** Saves the context's cookies and storage, owner-readable only; a failure here must not fail the run. */
 export async function saveSession(page, session) {
   try {
     const state = await page.context().storageState()
-    ensureStateDir(session.root ?? resolve(dirname(session.path), '..', '..'))
+    const root = rootOf(session)
+    if (root) ensureStateDir(root)
     mkdirSync(dirname(session.path), { recursive: true, mode: 0o700 })
     writeFileSync(session.path, JSON.stringify(state), { mode: 0o600 })
     chmodSync(session.path, 0o600) // the mode above applies only when the file is new

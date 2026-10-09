@@ -697,11 +697,12 @@ test('when nothing confirms a saved session the browser signs in again', async (
   assert.equal(rec.status, 'blocked')
   // No saved session at all: the plain sign-in, saved afterwards.
   const plain = fakeApp({ token: 'one' })
-  const session = { path: join(dir, 'fresh.json'), saved: false }
+  const session = { path: join(dir, 'elsewhere', 'fresh.json'), saved: false } // not under .affidavit: no self-gitignore, still saved
   const first = await step0(plain.page, fastCtx(), dir, { role: 'admin', start: '/invoices' }, CREDS, session)
   assert.equal(first.status, 'done', first.error)
   assert.equal(first.title, 'Sign in as admin and open /invoices')
   assert.equal(session.saved, true)
+  assert.ok(!existsSync(join(dir, '.affidavit')) && !existsSync(join(dir, 'elsewhere', '.affidavit')), 'the self-gitignore is only written for <root>/.affidavit/sessions')
 })
 
 test('doctor reports saved sessions that are world-readable or not gitignored', async () => {
