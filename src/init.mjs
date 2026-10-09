@@ -10,7 +10,7 @@ import { CONFIG_FILE } from './config.mjs'
 import { roleKey } from './env.mjs'
 import { PRESETS } from './presets.mjs'
 import { allSpecs, loadSpec } from './run.mjs'
-import { SESSIONS_DIR } from './session.mjs'
+import { SESSIONS_DIR, STATE_DIR } from './session.mjs'
 
 const PKG = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -212,17 +212,23 @@ export function rolesCheck(config) {
 
 /**
  * Saved sign-in sessions are live cookies: they must be gitignored and
- * readable by the owner only. Nothing to report while none are saved.
+ * readable by the owner only. Reported whenever sessions are in use, so a
+ * project that upgraded without running `init` again hears about it before
+ * its first session is written. Null when the feature is off.
  */
 export function sessionsCheck(config) {
+  if (config.reuseSession === false || config.auth?.type === 'none') return null
   const dir = join(config.root, SESSIONS_DIR)
-  if (!existsSync(dir)) return null
-  const files = readdirSync(dir).filter(f => f.endsWith('.json'))
-  if (!files.length) return null
+  const files = existsSync(dir) ? readdirSync(dir).filter(f => f.endsWith('.json')) : []
+  const git = existsSync(join(config.root, '.git'))
+  if (!files.length) {
+    const selfIgnored = existsSync(join(config.root, STATE_DIR, '.gitignore'))
+    return { ok: true, detail: `none saved yet; they go to ${SESSIONS_DIR}, which ${selfIgnored || !git ? 'gitignores itself' : 'will gitignore itself'} (owner-readable only)` }
+  }
   const open = process.platform === 'win32' ? [] : files.filter(f => (statSync(join(dir, f)).mode & 0o077) !== 0)
-  const tracked = existsSync(join(config.root, '.git')) && !gitignored(config.root, `${SESSIONS_DIR}/${files[0]}`)
+  const tracked = git && !gitignored(config.root, `${SESSIONS_DIR}/${files[0]}`)
   const what = `${files.length} saved sign-in session${files.length === 1 ? '' : 's'} in ${SESSIONS_DIR}`
-  if (tracked) return { ok: false, detail: `${what} are not gitignored: add ".affidavit/" to .gitignore (they hold live sign-in cookies)` }
+  if (tracked) return { ok: false, detail: `${what} are not gitignored: restore ${STATE_DIR}/.gitignore (containing "*") or add "${STATE_DIR}/" to .gitignore (they hold live sign-in cookies)` }
   if (open.length) return { ok: true, warn: true, detail: `${what}; ${open.join(', ')} readable by others (chmod 600 them, or delete them to be re-saved)` }
   return { ok: true, detail: `${what} (gitignored, owner-readable only); delete the folder to sign in fresh` }
 }

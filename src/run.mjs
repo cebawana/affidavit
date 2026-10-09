@@ -18,7 +18,7 @@ import { overall, review } from './reviewer.mjs'
 import { renderReport } from './report.mjs'
 import { concurrencyFor } from './backends/index.mjs'
 import { createQueue, isRateLimit, withRetry } from './queue.mjs'
-import { saveSession, sessionFor } from './session.mjs'
+import { sessionFor } from './session.mjs'
 
 const stamp = d => d.toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-')
 // No 0/o, 1/l/i: the reviewer reads this id off a screenshot.
@@ -80,12 +80,12 @@ export async function captureSpec(file, config, opts, log = console.log) {
   const dir = join(config.runsDir, `${stamp(startedAt)}-${spec.id}`)
   mkdirSync(dir, { recursive: true })
   log(`\n▶ ${spec.title}  [${spec.mode}, as ${spec.role}, ${spec.viewportSize.name}]  run ${runId}`)
-  const ctx = { base: opts.base, timeouts: config.timeouts, notFoundText: config.notFoundText, auth: config.auth }
   const t0 = Date.now()
-  const { browser, page } = await openBrowser({
+  const { browser, page, fresh } = await openBrowser({
     viewport: spec.viewportSize, headed: opts.headed, locale: config.locale, channel: config.browser.channel, hide: config.hide,
     storageState: session?.saved ? session.path : undefined,
   })
+  const ctx = { base: opts.base, timeouts: config.timeouts, notFoundText: config.notFoundText, auth: config.auth, fresh }
   let records
   let outcome = null
   let usage = null
@@ -95,9 +95,6 @@ export async function captureSpec(file, config, opts, log = console.log) {
     } else {
       ({ records, outcome, usage } = await runExplore({ page, ctx, dir, spec, creds, session, log, backend: config.backend, maxTurns: opts.maxTurns ?? config.maxTurns }))
     }
-    // Apps that rotate their tokens during use would leave the copy saved at
-    // sign-in stale early; the state at the end of a signed-in run is freshest.
-    if (session && records[0]?.status === 'done') await saveSession(page, session)
   } finally {
     await browser.close()
   }

@@ -8,12 +8,7 @@ import { chromium } from 'playwright-core'
 const CLICK_ROLES = ['button', 'link', 'tab', 'menuitem', 'option', 'checkbox', 'radio', 'switch', 'combobox']
 const CONTROL = 'input:not([type=hidden]):not([type=checkbox]):not([type=radio]), textarea, select'
 
-/**
- * @param {{ storageState?: string }} [options.storageState] a saved session
- *   (cookies and storage) to start from, so the role is already signed in.
- */
-export async function openBrowser({ viewport, headed, locale, channel, hide, storageState }) {
-  const browser = await chromium.launch({ channel: channel || undefined, headless: !headed })
+async function newPage(browser, { viewport, locale, hide, storageState }) {
   const context = await browser.newContext({
     viewport: { width: viewport.width, height: viewport.height }, locale, deviceScaleFactor: 1,
     storageState: storageState || undefined,
@@ -26,8 +21,24 @@ export async function openBrowser({ viewport, headed, locale, channel, hide, sto
       if (document.head) apply(); else document.addEventListener('DOMContentLoaded', apply)
     }, hide.map(sel => `${sel}{display:none!important}`).join(''))
   }
-  const page = await context.newPage()
-  return { browser, page }
+  return context.newPage()
+}
+
+/**
+ * @param {string} [options.storageState] a saved session (cookies and storage)
+ *   to start from, so the role is already signed in.
+ * @returns {{ browser, page, fresh }} `fresh(page)` closes that page's context
+ *   and opens a new one with nothing stored, whatever the app keeps its
+ *   session in (cookies, local storage, IndexedDB), so a sign-in starts clean.
+ */
+export async function openBrowser({ viewport, headed, locale, channel, hide, storageState }) {
+  const browser = await chromium.launch({ channel: channel || undefined, headless: !headed })
+  const page = await newPage(browser, { viewport, locale, hide, storageState })
+  const fresh = async old => {
+    await old.context().close().catch(() => {})
+    return newPage(browser, { viewport, locale, hide })
+  }
+  return { browser, page, fresh }
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -240,17 +251,6 @@ export async function loginFormVisible(page, auth, wait = 1000) {
     }
     return null
   }, wait))
-}
-
-/**
- * Forgets the browser's cookies and storage, so a sign-in starts from nothing.
- * Needed before signing in again over a saved session the app would not
- * confirm: left in place, the app may show the signed-in page instead of the
- * form. This resets the browser's own state; it reads nothing from the app.
- */
-export async function forgetSession(page) {
-  await page.context().clearCookies().catch(() => {})
-  await page.evaluate(() => { try { localStorage.clear(); sessionStorage.clear() } catch { /* opaque origin */ } }).catch(() => {})
 }
 
 /** Whether `url` is the sign-in page (path only; the query may carry a "next" target). */

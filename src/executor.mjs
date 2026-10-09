@@ -4,7 +4,7 @@
 
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { forgetSession, loginFormVisible, onLoginPath, perform, settle, signInSteps, textVisible } from './browser.mjs'
+import { loginFormVisible, onLoginPath, perform, settle, signInSteps, textVisible } from './browser.mjs'
 import { saveSession } from './session.mjs'
 import { ACTION_VOCABULARY, parseAction } from './spec.mjs'
 import { chat } from './backends/index.mjs'
@@ -48,16 +48,20 @@ const openAction = path => ({ kind: 'open', path, text: `open "${path}"` })
  *   2. otherwise, opening `auth.loginPath` sends the browser away from it.
  *      A sign-in form showing there means the session has expired: sign in
  *      right there. Neither a redirect nor a form means it cannot be confirmed.
- *   3. when nothing confirms it, sign in again. Erring toward a fresh sign-in
- *      costs seconds; the other way, a wrong verdict under a report that says
- *      "signed in".
+ *   3. when nothing confirms it, sign in again from a fresh browser context
+ *      (nothing stored, whatever the app keeps its session in). Erring toward
+ *      a fresh sign-in costs seconds; the other way, a wrong verdict under a
+ *      report that says "signed in".
  * Either way step 0 stays in the report with a screenshot, so the reviewer
  * sees the app signed in (or not), and the action notes say which path it took.
+ *
+ * Returns the record and the page to continue on (a new one after a fresh
+ * context), or null when there is nothing to do before the first step.
  */
 export async function signInStep(page, ctx, dir, spec, creds, session) {
   if (!creds) {
     if (!spec.start) return null
-    return runOne(page, ctx, dir, 0, { title: `Open ${spec.start}`, actions: [openAction(spec.start)], expect: ['The page opens.'] })
+    return { page, record: await runOne(page, ctx, dir, 0, { title: `Open ${spec.start}`, actions: [openAction(spec.start)], expect: ['The page opens.'] }) }
   }
   const { auth } = ctx
   const wait = ctx.timeouts.sessionCheck ?? 1000
@@ -97,9 +101,10 @@ export async function signInStep(page, ctx, dir, spec, creds, session) {
     // No marker and no login page to probe: nothing can confirm the session, so sign in again.
   }
   if (!error && !reused) {
-    // A saved session the app would not confirm is forgotten before signing in
-    // again; otherwise the app may show the signed-in page where the form should be.
-    if (session?.saved && !onLoginPage) await forgetSession(page)
+    // A saved session the app would not confirm is dropped before signing in
+    // again: a fresh context, or the app may show the signed-in page where
+    // the form should be.
+    if (session?.saved && !onLoginPage && ctx.fresh) page = await ctx.fresh(page)
     error = await performAll(page, ctx, signInSteps(auth, creds, spec.start, ctx.timeouts.signIn, { onLoginPage }), actions)
     if (!error && session) await saveSession(page, session)
   } else if (!error && reused && spec.start && !opened) {
@@ -108,19 +113,30 @@ export async function signInStep(page, ctx, dir, spec, creds, session) {
   await settle(page)
   const shot = await shoot(page, dir, 0)
   const start = spec.start ? (reused ? `, open ${spec.start}` : ` and open ${spec.start}`) : ''
-  return {
+  const record = {
     n: 0,
     title: reused ? `Signed in as ${spec.role} (saved session)${start}` : `Sign in as ${spec.role}${start}`,
     actions, expect: ['The app is shown signed in — no login form is visible.'],
     status: error ? 'blocked' : 'done', error: error ?? undefined, screenshot: shot.file, png: shot.png, url: page.url(),
   }
+  return { page, record }
+}
+
+/**
+ * Apps that rotate their tokens during use would leave the copy saved at
+ * sign-in stale early; the state at the end of a signed-in run is freshest.
+ */
+async function refreshSession(page, session, records) {
+  if (session && records[0]?.status === 'done') await saveSession(page, session)
 }
 
 /** @param {{ page, ctx, dir, spec, creds, session, log }} args */
 export async function runScripted({ page, ctx, dir, spec, creds, session, log }) {
   const records = []
-  const first = await signInStep(page, ctx, dir, spec, creds, session)
-  if (first) {
+  const setup = await signInStep(page, ctx, dir, spec, creds, session)
+  if (setup) {
+    page = setup.page
+    const first = setup.record
     records.push(first)
     log(`  0. ${first.title} — ${first.status}${first.error ? `: ${first.error}` : ''}`)
     if (first.status !== 'done') return records
@@ -134,6 +150,7 @@ export async function runScripted({ page, ctx, dir, spec, creds, session, log })
     log(`  ${n}. ${step.title} — ${rec.status}${rec.error ? `: ${rec.error}` : ''}`)
     blocked = rec.status === 'blocked'
   }
+  await refreshSession(page, session, records)
   return records
 }
 
@@ -164,8 +181,10 @@ export async function runExplore({ page, ctx, dir, spec, creds, session, log, ba
   const usage = { costUsd: 0, calls: 0 }
   let current = null
 
-  const first = await signInStep(page, ctx, dir, spec, creds, session)
-  if (first) {
+  const setup = await signInStep(page, ctx, dir, spec, creds, session)
+  if (setup) {
+    page = setup.page
+    const first = setup.record
     records.push(first)
     log(`  0. ${first.title} — ${first.status}${first.error ? `: ${first.error}` : ''}`)
     if (first.status !== 'done') return { records, outcome: { stuck: true, reason: first.error }, usage }
@@ -228,5 +247,6 @@ export async function runExplore({ page, ctx, dir, spec, creds, session, log, ba
     history.push(`${turn}. ${action.text} — ${rec.status === 'done' ? 'ok' : `FAILED: ${rec.error}`}${tries > 1 ? ` (you have now done this ${tries} times — if it did not help, look somewhere else)` : ''}`)
     log(`  ${rec.n}. ${rec.title} → ${action.text} — ${rec.status}${rec.error ? `: ${rec.error}` : ''}`)
   }
+  await refreshSession(page, session, records)
   return { records, outcome, usage }
 }

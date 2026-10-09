@@ -111,16 +111,19 @@ The same command finishes a suite captured with `run --all --no-review`, and
 switching the backend or the model.
 
 Signing in is saved per role. After a sign-in, the browser's session is kept
-in `.affidavit/sessions/` (gitignored by `init`, readable by you only; `doctor`
-checks both) and the next spec of that role starts from it. The session is
+in `.affidavit/sessions/`, readable by you only, in a folder that gitignores
+itself (`.affidavit/.gitignore` holds `*`, so upgrading projects are covered
+without running `init` again; `init` adds a root line too and `doctor` checks).
+The next spec of that role starts from it. The session is
 trusted only on positive evidence, because a missing login form proves nothing
 on a public page: with `auth.signedInText` set (text only a signed-in user
 sees, such as "Sign out"), it must be on screen; otherwise the browser opens
 `auth.loginPath` and must be sent away from it. A sign-in form there means the
 session expired, so it signs in right there and refreshes the saved copy. When
-nothing confirms it, the browser forgets the session and signs in again (if
-your app shows the signed-in page at the login URL instead of redirecting, set
-`signedInText` so every spec after the first can skip the sign-in). Step 0 stays in the report
+nothing confirms it, the browser signs in again from a fresh context with
+nothing stored, whatever the app keeps its session in (if your app shows the
+signed-in page at the login URL instead of redirecting, set `signedInText` so
+every spec after the first can skip the sign-in). Step 0 stays in the report
 either way, with notes saying which path it took. `--fresh-sign-in` ignores
 saved sessions for one run; `"reuseSession": false` turns the feature off;
 deleting `.affidavit/sessions/` forgets every session.
