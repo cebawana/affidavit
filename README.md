@@ -269,7 +269,7 @@ a pass. If your `.gitignore` excludes `.claude/`, init tells you how to let
 
 ## Status
 
-v0.3, early, [on npm](https://www.npmjs.com/package/affidavit). Planned: parallel
+v0.4, early, [on npm](https://www.npmjs.com/package/affidavit). Planned: parallel
 browsers with `--workers`, more framework presets, Codex / local-model backends,
 and a Claude Code plugin package.
 
