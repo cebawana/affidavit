@@ -130,6 +130,83 @@ async function findText(page, text) {
   return (await firstVisible(page.getByText(text, { exact: true }))) ?? firstVisible(page.getByText(text))
 }
 
+const QUIET_MS = 300 // nothing on screen changed for this long: the page is ready
+const NOTEWORTHY_MS = 1000 // a shorter wait is normal page loading, not worth a note
+
+/**
+ * Runs inside the page: resolves true once `quiet` ms pass with no change to
+ * the document and no layout shift, false if the page is still changing when
+ * `limit` ms are up. Counts changes only — it reads nothing from the app.
+ */
+function quietWindow({ quiet, limit }) {
+  return new Promise(resolve => {
+    let timer
+    let shifts = null
+    const changes = new MutationObserver(() => bump())
+    const finish = value => {
+      changes.disconnect()
+      shifts?.disconnect()
+      clearTimeout(timer)
+      clearTimeout(deadline)
+      resolve(value)
+    }
+    const bump = () => {
+      clearTimeout(timer)
+      timer = setTimeout(() => finish(true), quiet)
+    }
+    const deadline = setTimeout(() => finish(false), limit)
+    changes.observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true })
+    try {
+      shifts = new PerformanceObserver(list => { if (list.getEntries().some(e => !e.hadRecentInput)) bump() })
+      shifts.observe({ type: 'layout-shift' })
+    } catch { /* no layout-shift entries in this browser: document changes still count */ }
+    bump()
+  })
+}
+
+/**
+ * Waits until the page is ready to be acted on, the way a person waits for a
+ * page to stop loading before clicking: the load has finished, the network has
+ * gone quiet, and nothing on screen has changed or moved for a moment. On a
+ * server-rendered app a click can otherwise land before the page's script has
+ * taken over, and the click is lost — a timing problem that would read as a
+ * product bug. Generic by design (no framework hooks, nothing from inside the
+ * app), and best effort: a page that never stops changing (a live clock, a
+ * polling feed) is acted on anyway once `budget` ms are spent. The target
+ * itself is checked again at click time: Playwright acts only on an element
+ * whose box has stopped moving.
+ *
+ * @returns {{ waitedMs: number, quiet: boolean }}
+ */
+export async function ready(page, budget) {
+  const started = Date.now()
+  const left = () => budget - (Date.now() - started)
+  let quiet = false
+  try {
+    while (left() > 0 && !quiet) {
+      await page.waitForLoadState('load', { timeout: left() }).catch(() => {})
+      if (left() > 0) await page.waitForLoadState('networkidle', { timeout: left() }).catch(() => {})
+      if (left() <= 0) break
+      // A navigation while we watch destroys the page's context: start over
+      // with the new page. The deadline keeps one watch short, so a page that
+      // is never quiet still re-checks the network on the way to giving up.
+      const limit = Math.max(Math.min(left(), 2000), QUIET_MS)
+      quiet = await page.evaluate(quietWindow, { quiet: QUIET_MS, limit }).catch(() => sleep(100).then(() => false))
+    }
+  } catch { /* readiness is a courtesy to the action, never a reason to skip it */ }
+  return { waitedMs: Date.now() - started, quiet }
+}
+
+/** The note an action carries when the wait before it was long enough to matter. */
+export function readyNote({ waitedMs, quiet }) {
+  if (waitedMs < NOTEWORTHY_MS) return undefined
+  const secs = `${(waitedMs / 1000).toFixed(1)}s`
+  return quiet ? `waited ${secs} for the page to be ready` : `the page was still changing after ${secs}; acted anyway`
+}
+
+/** Actions that touch the page, so they wait for it to be ready first. */
+const INTERACTS = new Set(['click', 'fill', 'select', 'check', 'uncheck', 'press', 'scrollTo'])
+
 /** Lets the page finish what the last action started before we look at it. */
 export async function settle(page) {
   await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {})
@@ -145,6 +222,12 @@ const UNLABELLED = 'field found by the text beside it (it has no attached label)
  * @param {{ base: string, timeouts: { find: number, gone: number }, notFoundText: string | null }} ctx
  */
 export async function perform(page, ctx, action) {
+  const waited = INTERACTS.has(action.kind) ? readyNote(await ready(page, ctx.timeouts.ready ?? 5000)) : undefined
+  const res = await act(page, ctx, action)
+  return waited ? { ...res, note: [res.note, waited].filter(Boolean).join('; ') } : res
+}
+
+async function act(page, ctx, action) {
   const { find, gone: goneTimeout } = ctx.timeouts
   const miss = what => ({ ok: false, note: `Could not see ${what} on screen` })
   const many = hit => (hit.count > 1 ? `${hit.count} matches on screen; used the first` : undefined)

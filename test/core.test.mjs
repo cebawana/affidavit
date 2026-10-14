@@ -285,7 +285,7 @@ import { concurrencyFor } from '../src/backends/index.mjs'
 import { RESULT_FORMAT, collectRuns, loadRun, resolveRunArg, reviewRun, reviewRuns, runMany, selectRuns, writeRun } from '../src/run.mjs'
 import { SESSIONS_DIR, STATE_DIR, ensureStateDir, saveSession, sessionFor, sessionPath } from '../src/session.mjs'
 import { execFileSync } from 'node:child_process'
-import { loginFormVisible, onLoginPath } from '../src/browser.mjs'
+import { loginFormVisible, onLoginPath, perform, ready, readyNote } from '../src/browser.mjs'
 import { signInStep } from '../src/executor.mjs'
 import { sessionsCheck } from '../src/init.mjs'
 import { chmodSync, statSync } from 'node:fs'
@@ -614,7 +614,7 @@ function fakeApp({ token = 'one', session = null, loginPath = '/login', redirect
     goto, url: () => st.url, reload: async () => {},
     getByText: t => el(t), getByLabel: t => el(t), getByPlaceholder: () => none,
     getByRole: (role, opts) => (role === 'dialog' || !opts?.name ? none : el(opts.name)),
-    waitForLoadState: async () => {}, screenshot: async () => PNG, keyboard: { press: async () => {} },
+    waitForLoadState: async () => {}, evaluate: async () => true, screenshot: async () => PNG, keyboard: { press: async () => {} },
     context: () => ({ storageState: async () => ({ cookies: [{ name: 'session', value: st.session }], origins: [] }) }),
   }
   // A fresh context starts with nothing stored: the pretend browser forgets the session.
@@ -739,4 +739,30 @@ test('the state folder gitignores itself, so an upgraded project cannot commit s
   writeFileSync(join(config.root, STATE_DIR, '.gitignore'), '*\n!keep-me\n')
   ensureStateDir(config.root)
   assert.equal(readFileSync(join(config.root, STATE_DIR, '.gitignore'), 'utf8'), '*\n!keep-me\n')
+})
+
+test('the wait before an action is noted only when it was long, and never stops the action', async () => {
+  assert.equal(readyNote({ waitedMs: 800, quiet: true }), undefined, 'under a second is ordinary loading')
+  assert.equal(readyNote({ waitedMs: 2340, quiet: true }), 'waited 2.3s for the page to be ready')
+  assert.equal(readyNote({ waitedMs: 5010, quiet: false }), 'the page was still changing after 5.0s; acted anyway')
+
+  // A page that is still changing when every watch ends: the budget is spent, then the action goes ahead.
+  const busy = { ...fakeApp().page, evaluate: async (_fn, { limit }) => { await tick(limit); return false } }
+  const ctx = { ...fastCtx(), timeouts: { ...fastCtx().timeouts, ready: 1100 } }
+  const wait = await ready(busy, 1100)
+  assert.equal(wait.quiet, false)
+  assert.ok(wait.waitedMs >= 1100, `spent the budget (${wait.waitedMs}ms)`)
+  await busy.goto('/login')
+  const res = await perform(busy, ctx, { kind: 'click', target: 'Sign in', text: 'click "Sign in"' })
+  assert.equal(res.ok, true)
+  assert.equal(res.note, 'the page was still changing after 1.1s; acted anyway')
+  // The note sits after the action's own, so a failure reads first.
+  const miss = await perform(busy, ctx, { kind: 'click', target: 'Nowhere', text: 'click "Nowhere"' })
+  assert.equal(miss.ok, false)
+  assert.equal(miss.note, 'Could not see "Nowhere" on screen; the page was still changing after 1.1s; acted anyway')
+  // No budget: no wait at all, and the page's readiness check is never run.
+  const never = { ...busy, evaluate: async () => { throw new Error('should not be asked') } }
+  const none = await ready(never, 0)
+  assert.equal(none.quiet, false)
+  assert.ok(none.waitedMs < 100)
 })

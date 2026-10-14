@@ -45,8 +45,10 @@ export const DEFAULTS = {
   reuseSession: true,
   leakTerms: [],
   hide: [],
+  // ready: how long an action waits for the page to finish loading and stop
+  // changing before it acts (a page that never settles is acted on anyway).
   // sessionCheck: how long a saved session's sign-in screen or marker gets to appear.
-  timeouts: { find: 15000, gone: 20000, signIn: 90000, sessionCheck: 1000 },
+  timeouts: { find: 15000, gone: 20000, signIn: 90000, ready: 5000, sessionCheck: 1000 },
   allowRemote: false,
   maxTurns: 25,
 }
