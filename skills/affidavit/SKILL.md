@@ -32,7 +32,8 @@ answer its question from a script.
    `defaultRole` in the config lets you leave `role` out.
 4. **Make persistence visible.** After a write, `reload` and expect the data to
    still be on screen. After a navigation, `wait for` something the next screen
-   must show, or the screenshot may catch a loading state.
+   must show, or the screenshot may catch a loading state. (Actions need no
+   such care: the browser waits for the page to load and settle before each one.)
 5. **Use `{run}` in every name you type**, and delete what you created as the
    last steps.
 6. **Pick the screen size on purpose**: `viewport: desktop` / `phone` /

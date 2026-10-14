@@ -168,6 +168,24 @@ An admin sends invoice INV-0042 and sees it marked as sent.
 `wait until gone "Text"` · `scroll to "Text"` · `reload`.
 `{run}` becomes a short unique id per run, `{today}` becomes `YYYY-MM-DD`.
 
+**The browser waits before it acts.** Before every action that touches the
+page it waits, as a person would: for the page to finish loading, a moment
+(up to 1 s) for the network to go quiet so a bundle still on its way can
+arrive, and then for nothing on screen to change or move for a moment, all
+within `timeouts.ready` (5 s). On a server-rendered app a click would
+otherwise land before the page's script has taken over and simply be lost,
+which reads as a product bug when it is a timing one. The wait is generic (no
+framework hooks) and never blocks a step: a page that never settles (a live
+clock) is acted on when the budget is spent, and a page that polls the network
+costs about a second, not the budget. A `click` on a control that is disabled
+gives it `timeouts.find` to become enabled before reporting it, because many
+apps disable their buttons until their script is ready. A wait of a second or
+more is noted on the action in the report ("waited 2.3s for the page to be
+ready", "the screen kept changing for 5.0s; acted anyway"), so slow pages are
+visible without hiding real failures. If every action says the screen kept
+changing, something on the page never stops moving; lower `timeouts.ready` for
+that project.
+
 **Two modes, one format.** With `## Steps` the spec is scripted, which is
 repeatable and the right shape for regression. With only `## Goal`, a vision
 model explores like a new user. If it reaches the goal, its path is saved as
@@ -209,7 +227,7 @@ looked up and any `role` is only a label shown in the report.
   "reuseSession": true,
   "leakTerms": ["postgres", "/\\btenant_id\\b/"],
   "hide": [],
-  "timeouts": { "find": 15000, "gone": 20000, "signIn": 90000, "sessionCheck": 1000 },
+  "timeouts": { "find": 15000, "gone": 20000, "signIn": 90000, "ready": 5000, "sessionCheck": 1000 },
   "allowRemote": false
 }
 ```
