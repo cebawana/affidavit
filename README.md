@@ -168,6 +168,18 @@ An admin sends invoice INV-0042 and sees it marked as sent.
 `wait until gone "Text"` · `scroll to "Text"` · `reload`.
 `{run}` becomes a short unique id per run, `{today}` becomes `YYYY-MM-DD`.
 
+**When several things match.** `click "Invoices"` on a page with a sidebar
+link and an in-page tab of that name clicks the tab: among visible matches the
+browser prefers the open dialog, then the main content, then the rest of the
+page, then the navigation (a sidebar, the page's header or footer). Exact
+wording comes first, and a trailing count still counts as exact ("Invoices 3",
+"Pending · 2", "Inbox (12)"). A partial match never outranks an exact one,
+wherever it sits: `click "Save"` is never "Save as draft". The action's note
+in the report says how many matched, which one was used and where the others
+are, including a partial match elsewhere on the page, so a questionable click
+is never silent. `click "Text" near "Row text"` still pins the choice when
+the page itself is ambiguous.
+
 **The browser waits before it acts.** Before every action that touches the
 page it waits, as a person would: for the page to finish loading, a moment
 (up to 1 s) for the network to go quiet so a bundle still on its way can

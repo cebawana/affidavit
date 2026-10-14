@@ -65,14 +65,113 @@ async function scopes(page) {
   return n ? [dialogs.nth(n - 1), page] : [page]
 }
 
+/**
+ * Runs in the browser, on one candidate: where it sits, as a person would
+ * describe it (the open dialog, the main content, the navigation — a sidebar,
+ * the page's header or footer — or just the page), its wording for the note,
+ * and a key that tells the same element apart from another. Reads landmarks
+ * and visible text only.
+ */
+function placeOf(el) {
+  let region = null
+  let pending = null
+  for (let n = el; n && n.tagName !== 'BODY' && !region; n = n.parentElement) {
+    const role = (n.getAttribute('role') || '').toLowerCase()
+    const tag = n.tagName.toLowerCase()
+    if (tag === 'dialog' || role === 'dialog' || role === 'alertdialog') region = 'dialog'
+    else if (tag === 'main' || role === 'main') region = 'main'
+    else if (tag === 'nav' || tag === 'aside' || ['navigation', 'banner', 'contentinfo', 'complementary'].includes(role)) region = 'navigation'
+    // The page's own header or footer is chrome; a card's header inside an article is content.
+    else if (tag === 'header' || tag === 'footer') pending = 'navigation'
+    else if (tag === 'article' || tag === 'section' || tag === 'form') pending = null
+  }
+  const path = []
+  for (let n = el; n.parentElement; n = n.parentElement) path.push(Array.prototype.indexOf.call(n.parentElement.children, n))
+  const name = (el.getAttribute('aria-label') || el.innerText || el.textContent || el.value || '').replace(/\s+/g, ' ').trim()
+  return { region: region ?? pending ?? 'page', key: path.join('/'), name }
+}
+
+const REGION_RANK = { dialog: 0, main: 1, page: 2, navigation: 3 }
+const REGION_NAME = { dialog: 'the open dialog', main: 'the main content', page: 'the page', navigation: 'the navigation' }
+const MAX_CANDIDATES = 5 // enough to rank, cheap to classify
+
+const escapeRegExp = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/**
+ * The exact wording, allowing a trailing count: a tab or link often carries
+ * one ("Invoices 3", "Pending · 2", "Inbox (12)"), and a person still calls
+ * it "Invoices". Case and the rest of the words must match.
+ */
+export const exactName = name => new RegExp(`^${escapeRegExp(name.trim())}(?:\\s*[·•:|(\\[-]?\\s*\\d+[)\\]]?)?$`)
+
+/**
+ * Among several visible matches, the one a person most likely means. Exact
+ * wording comes first; among equals, where it sits decides: the open dialog,
+ * then the main content, then the rest of the page, then the navigation —
+ * `click "Invoices"` is the tab in front of you, not the sidebar link of the
+ * same name. A partial match never outranks an exact one, wherever it sits:
+ * `click "Save"` must not land on "Save as draft" because that sits in the
+ * main content, since the run would go on and judge the wrong flow. A partial
+ * match in another place is named in the note instead, so a questionable
+ * pick is visible.
+ */
+async function pick(exact, nExact, partial, nPartial) {
+  const place = async (loc, index) => ({ loc, index, ...(await loc.evaluate(placeOf).catch(() => ({ region: 'page', key: `?${index}`, name: '' }))) })
+  const exacts = []
+  for (let i = 0; i < Math.min(nExact, MAX_CANDIDATES); i++) exacts.push(await place(exact.nth(i), i))
+  const seen = new Set(exacts.map(c => c.key))
+  const partials = [] // the partial matches include the exact ones; keep the rest
+  for (let i = 0; i < Math.min(nPartial, MAX_CANDIDATES + exacts.length) && partials.length < MAX_CANDIDATES; i++) {
+    const c = await place(partial.nth(i), i)
+    if (!seen.has(c.key)) partials.push(c)
+  }
+  const byPlace = (a, b) => REGION_RANK[a.region] - REGION_RANK[b.region] || a.index - b.index
+  exacts.sort(byPlace)
+  partials.sort(byPlace)
+  const chosen = exacts[0] ?? partials[0]
+  return { loc: chosen.loc, count: Math.max(nExact, nPartial), region: chosen.region, chosen, exacts, partials }
+}
+
+/** What the report says when more than one thing matched. */
+export function choiceNote(hit) {
+  if (hit.count <= 1) return undefined
+  if (!hit.chosen) return `${hit.count} matches on screen; used the first`
+  const { chosen, exacts } = hit
+  const at = REGION_NAME[chosen.region]
+  const where = cs => [...new Set(cs.map(c => c.region))].map(r => REGION_NAME[r]).join(' and ')
+  const named = cs => cs.map(c => `"${c.name}"`).join(', ')
+  // A partial match beside the exact one in the same place ("Save as draft"
+  // next to "Save") is no surprise and not worth a note; elsewhere it is.
+  const partials = exacts.includes(chosen) ? hit.partials.filter(c => c.region !== chosen.region) : hit.partials
+  const own = exacts.includes(chosen) ? exacts : partials
+  const others = own.filter(c => c !== chosen)
+  const count = exacts.length + partials.length
+  if (count <= 1) return undefined
+  const head = `${count} matches on screen`
+  if (exacts.includes(chosen) && partials.length) {
+    return `${head}; used the exact match in ${at}`
+      + (others.length ? `; other exact matches in ${where(others)}` : '')
+      + `; partial match${partials.length > 1 ? 'es' : ''} (${named(partials)}) in ${where(partials)}`
+  }
+  if (!others.length) return `${head}; used the one in ${at}`
+  if (others.every(c => c.region === chosen.region)) return `${head}, all in ${at}; used the first`
+  return `${head}; used the one in ${at}; the others are in ${where(others)}`
+}
+
+/**
+ * The visible matches for `name` by role, or failing that by text. One match
+ * is returned as it is; several are ranked by `pick`.
+ */
 async function findClickable(root, name) {
-  for (const exact of [true, false]) {
-    for (const role of CLICK_ROLES) {
-      const hit = await firstVisible(root.getByRole(role, { name, exact }))
-      if (hit) return hit
-    }
-    const hit = await firstVisible(root.getByText(name, { exact }))
-    if (hit) return hit
+  const byRole = exact => CLICK_ROLES.map(role => root.getByRole(role, { name: exact ? exactName(name) : name })).reduce((a, b) => a.or(b)).filter({ visible: true })
+  const byText = exact => root.getByText(exact ? exactName(name) : name).filter({ visible: true })
+  for (const locate of [byRole, byText]) {
+    const exact = locate(true)
+    const partial = locate(false) // includes the exact matches
+    const [nExact, nPartial] = await Promise.all([exact.count(), partial.count()])
+    if (!nExact && !nPartial) continue
+    if (nExact <= 1 && nPartial <= 1) return { loc: (nExact ? exact : partial).first(), count: 1 }
+    return pick(exact, nExact, partial, nPartial)
   }
   return null
 }
@@ -245,7 +344,7 @@ export async function perform(page, ctx, action) {
 async function act(page, ctx, action) {
   const { find, gone: goneTimeout } = ctx.timeouts
   const miss = what => ({ ok: false, note: `Could not see ${what} on screen` })
-  const many = hit => (hit.count > 1 ? `${hit.count} matches on screen; used the first` : undefined)
+  const many = choiceNote
   try {
     switch (action.kind) {
       case 'open': {

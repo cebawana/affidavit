@@ -36,6 +36,54 @@ const PAGES = {
     <script>setTimeout(() => { document.querySelector('button').disabled = false }, 1200)</script>`,
   // Disabled for good.
   '/never-enabled': `<!doctype html><title>Never</title><h1>Invoice</h1><button disabled>Save</button><p id="out"></p>`,
+  // The same words in the sidebar and in the page: a person means the tab in front of them.
+  '/ambiguous': `<!doctype html><title>Ambiguous</title>
+    <nav><a href="#" onclick="out('nav link')">Invoices</a><a href="#" onclick="out('nav link')">Settings</a></nav>
+    <main><div role="tablist"><button role="tab" onclick="out('tab')">Invoices</button></div>
+      <button onclick="out('body button')">Settings</button><p id="out"></p></main>
+    <script>function out(t) { document.getElementById('out').textContent = t }</script>`,
+  // No <main>: the page body still beats the page header, and a card's own header is content, not chrome.
+  '/no-main': `<!doctype html><title>No main</title>
+    <header><a href="#" onclick="out('header')">Settings</a><a href="#" onclick="out('header')">Edit</a></header>
+    <div><button onclick="out('body')">Settings</button></div>
+    <article><header><button onclick="out('card')">Edit</button></header></article><p id="out"></p>
+    <script>function out(t) { document.getElementById('out').textContent = t }</script>`,
+  // The review's table: the tab carries a count badge, so its name is not the exact words.
+  '/badge-div-sidebar': `<!doctype html><title>Badge</title>
+    <div class="sidebar"><a href="#" onclick="out('sidebar link')">Invoices</a></div>
+    <main><div role="tablist"><button role="tab" onclick="out('tab')">Invoices <span class="badge">3</span></button></div><p id="out"></p></main>
+    <script>function out(t) { document.getElementById('out').textContent = t }</script>`,
+  '/badge-nav-sidebar': `<!doctype html><title>Badge nav</title>
+    <nav><a href="#" onclick="out('sidebar link')">Invoices</a></nav>
+    <main><div role="tablist"><button role="tab" onclick="out('tab')">Invoices <span class="badge">3</span></button></div><p id="out"></p></main>
+    <script>function out(t) { document.getElementById('out').textContent = t }</script>`,
+  // Only a partial match in the main content against an exact one in the sidebar: the exact one, and the note names the other.
+  '/partial-in-main': `<!doctype html><title>Partial</title>
+    <nav><a href="#" onclick="out('sidebar link')">Invoices</a></nav>
+    <main><div role="tablist"><button role="tab" onclick="out('tab')">Overdue invoices</button></div><p id="out"></p></main>
+    <script>function out(t) { document.getElementById('out').textContent = t }</script>`,
+  // Short generic words: the header's "New" menu, "More" and "Save" are what the spec means, never the
+  // longer control in the main content that happens to start with the same word.
+  '/generic-header': `<!doctype html><title>Generic</title>
+    <header><button onclick="out('New')">New</button><button onclick="out('More')">More</button></header>
+    <div class="toolbar"><button onclick="out('Save')">Save</button></div>
+    <main><button onclick="out('New bookmark')">New bookmark</button><button onclick="out('More filters')">More filters</button>
+      <button onclick="out('Save as draft')">Save as draft</button><p id="out"></p></main>
+    <script>function out(t) { document.getElementById('out').textContent = t }</script>`,
+  '/generic-divbar': `<!doctype html><title>Generic bar</title>
+    <div class="topbar"><button onclick="out('New')">New</button></div>
+    <main><button onclick="out('New invoice')">New invoice</button><p id="out"></p></main>
+    <script>function out(t) { document.getElementById('out').textContent = t }</script>`,
+  // The exact match is in the main content; a partial one elsewhere is mentioned, a partial one beside it is not.
+  '/exact-wins': `<!doctype html><title>Exact</title>
+    <nav><a href="#" onclick="out('archive link')">Invoices archive</a></nav>
+    <main><button onclick="out('main button')">Invoices</button>
+      <button onclick="out('save')">Save</button><button onclick="out('draft')">Save as draft</button><p id="out"></p></main>
+    <script>function out(t) { document.getElementById('out').textContent = t }</script>`,
+  // Three of the same in one region: the first, and the note says where they all are.
+  '/same-region': `<!doctype html><title>Same</title>
+    <nav><a href="#" onclick="out('first')">More</a><a href="#" onclick="out('second')">More</a><a href="#" onclick="out('third')">More</a></nav><p id="out"></p>
+    <script>function out(t) { document.getElementById('out').textContent = t }</script>`,
   // A live clock: the page never stops changing, and is acted on anyway.
   '/ticking': `<!doctype html><title>Ticking</title><h1>Invoice</h1><span id="clock"></span>
     <button onclick="document.getElementById('out').textContent='Saved'">Save</button><p id="out"></p>
@@ -140,6 +188,86 @@ test('a control disabled until the page is ready gets time to become enabled; on
   assert.equal(stuck.ok, false)
   assert.equal(stuck.note, '"Save" is visible but disabled (still disabled after 1s)')
   assert.ok(Date.now() - started >= 1000, 'given the find timeout to become enabled')
+  await page.context().close()
+})
+
+const clickOn = (page, target) => perform(page, ctx(5000), { kind: 'click', target, text: `click "${target}"` })
+const shown = page => page.locator('#out').textContent()
+
+test('a same-named sidebar link and in-page tab: the tab is clicked, and the report says so', { skip }, async () => {
+  const page = await open('/ambiguous')
+  let res = await clickOn(page, 'Invoices')
+  assert.equal(res.ok, true)
+  assert.equal(await shown(page), 'tab')
+  assert.equal(res.note, '2 matches on screen; used the one in the main content; the others are in the navigation')
+  res = await clickOn(page, 'Settings')
+  assert.equal(await shown(page), 'body button', 'a plain button in main beats a nav link')
+  await page.context().close()
+})
+
+test('without a <main>, the page body beats the page header, and a card header is content', { skip }, async () => {
+  const page = await open('/no-main')
+  let res = await clickOn(page, 'Settings')
+  assert.equal(await shown(page), 'body')
+  assert.equal(res.note, '2 matches on screen; used the one in the page; the others are in the navigation')
+  res = await clickOn(page, 'Edit')
+  assert.equal(await shown(page), 'card', 'a header inside an article is not the page header')
+  assert.equal(res.note, '2 matches on screen; used the one in the page; the others are in the navigation')
+  await page.context().close()
+})
+
+test('a tab with a count badge is still the exact match, whatever the sidebar is made of', { skip }, async () => {
+  let page = await open('/badge-div-sidebar')
+  let res = await clickOn(page, 'Invoices')
+  assert.equal(await shown(page), 'tab')
+  assert.equal(res.note, '2 matches on screen; used the one in the main content; the others are in the page')
+  await page.context().close()
+  page = await open('/badge-nav-sidebar')
+  res = await clickOn(page, 'Invoices')
+  assert.equal(await shown(page), 'tab')
+  assert.equal(res.note, '2 matches on screen; used the one in the main content; the others are in the navigation')
+  await page.context().close()
+})
+
+test('a partial match never outranks an exact one, wherever it sits; the note names it', { skip }, async () => {
+  let page = await open('/partial-in-main')
+  let res = await clickOn(page, 'Invoices')
+  assert.equal(await shown(page), 'sidebar link')
+  assert.equal(res.note, '2 matches on screen; used the exact match in the navigation; partial match ("Overdue invoices") in the main content')
+  await page.context().close()
+
+  // The review's rows: short generic words must keep meaning the control with exactly those words.
+  page = await open('/generic-header')
+  for (const [word, partial, where] of [['New', 'New bookmark', 'the navigation'], ['More', 'More filters', 'the navigation'], ['Save', 'Save as draft', 'the page']]) {
+    res = await clickOn(page, word)
+    assert.equal(await shown(page), word, `click "${word}" is "${word}", not "${partial}"`)
+    assert.equal(res.note, `2 matches on screen; used the exact match in ${where}; partial match ("${partial}") in the main content`)
+  }
+  await page.context().close()
+
+  page = await open('/generic-divbar')
+  res = await clickOn(page, 'New')
+  assert.equal(await shown(page), 'New')
+  assert.equal(res.note, '2 matches on screen; used the exact match in the page; partial match ("New invoice") in the main content')
+  await page.context().close()
+})
+
+test('an exact match wins; a partial match elsewhere is mentioned, one beside it is not', { skip }, async () => {
+  const page = await open('/exact-wins')
+  let res = await clickOn(page, 'Invoices')
+  assert.equal(await shown(page), 'main button')
+  assert.equal(res.note, '2 matches on screen; used the exact match in the main content; partial match ("Invoices archive") in the navigation')
+  res = await clickOn(page, 'Save')
+  assert.equal(await shown(page), 'save')
+  assert.equal(res.note, undefined, '"Save as draft" beside "Save" is no surprise')
+  await page.context().close()
+})
+
+test('several matches in one region: the first, and the note says where they all are', { skip }, async () => {
+  const page = await open('/same-region')
+  const res = await clickOn(page, 'More')
+  assert.equal(await shown(page), 'first')
+  assert.equal(res.note, '3 matches on screen, all in the navigation; used the first')
   await page.context().close()
 })
 
