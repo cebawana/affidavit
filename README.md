@@ -171,10 +171,15 @@ An admin sends invoice INV-0042 and sees it marked as sent.
 **When several things match.** `click "Invoices"` on a page with a sidebar
 link and an in-page tab of that name clicks the tab: among visible matches the
 browser prefers the open dialog, then the main content, then the rest of the
-page, then the navigation (a sidebar, the page's header or footer). The
-action's note in the report says how many matched and which one was used, so
-a surprising click is never silent. `click "Text" near "Row text"` still
-pins the choice when the page itself is ambiguous.
+page, then the navigation (a sidebar, the page's header or footer). Exact
+wording comes first, and a trailing count still counts as exact ("Invoices 3",
+"Pending · 2", "Inbox (12)"). Place outranks wording in one case: when every
+exact match sits outside the dialog and the main content and a partial match
+sits inside one, the partial match wins (the sidebar's "Invoices" against the
+page's "Overdue invoices" tab). The action's note in the report says how many
+matched, which one was used and where the others are, so a surprising click
+is never silent. `click "Text" near "Row text"` still pins the choice when
+the page itself is ambiguous.
 
 **The browser waits before it acts.** Before every action that touches the
 page it waits, as a person would: for the page to finish loading, a moment

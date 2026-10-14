@@ -48,6 +48,26 @@ const PAGES = {
     <div><button onclick="out('body')">Settings</button></div>
     <article><header><button onclick="out('card')">Edit</button></header></article><p id="out"></p>
     <script>function out(t) { document.getElementById('out').textContent = t }</script>`,
+  // The review's table: the tab carries a count badge, so its name is not the exact words.
+  '/badge-div-sidebar': `<!doctype html><title>Badge</title>
+    <div class="sidebar"><a href="#" onclick="out('sidebar link')">Invoices</a></div>
+    <main><div role="tablist"><button role="tab" onclick="out('tab')">Invoices <span class="badge">3</span></button></div><p id="out"></p></main>
+    <script>function out(t) { document.getElementById('out').textContent = t }</script>`,
+  '/badge-nav-sidebar': `<!doctype html><title>Badge nav</title>
+    <nav><a href="#" onclick="out('sidebar link')">Invoices</a></nav>
+    <main><div role="tablist"><button role="tab" onclick="out('tab')">Invoices <span class="badge">3</span></button></div><p id="out"></p></main>
+    <script>function out(t) { document.getElementById('out').textContent = t }</script>`,
+  // Only a partial match in the main content against an exact one in the sidebar: place wins, and the note says so.
+  '/overrule': `<!doctype html><title>Overrule</title>
+    <nav><a href="#" onclick="out('sidebar link')">Invoices</a></nav>
+    <main><div role="tablist"><button role="tab" onclick="out('tab')">Overdue invoices</button></div><p id="out"></p></main>
+    <script>function out(t) { document.getElementById('out').textContent = t }</script>`,
+  // The exact match is in the main content; a partial one elsewhere is mentioned, a partial one beside it is not.
+  '/exact-wins': `<!doctype html><title>Exact</title>
+    <nav><a href="#" onclick="out('archive link')">Invoices archive</a></nav>
+    <main><button onclick="out('main button')">Invoices</button>
+      <button onclick="out('save')">Save</button><button onclick="out('draft')">Save as draft</button><p id="out"></p></main>
+    <script>function out(t) { document.getElementById('out').textContent = t }</script>`,
   // Three of the same in one region: the first, and the note says where they all are.
   '/same-region': `<!doctype html><title>Same</title>
     <nav><a href="#" onclick="out('first')">More</a><a href="#" onclick="out('second')">More</a><a href="#" onclick="out('third')">More</a></nav><p id="out"></p>
@@ -181,6 +201,38 @@ test('without a <main>, the page body beats the page header, and a card header i
   res = await clickOn(page, 'Edit')
   assert.equal(await shown(page), 'card', 'a header inside an article is not the page header')
   assert.equal(res.note, '2 matches on screen; used the one in the page; the others are in the navigation')
+  await page.context().close()
+})
+
+test('a tab with a count badge is still the exact match, whatever the sidebar is made of', { skip }, async () => {
+  let page = await open('/badge-div-sidebar')
+  let res = await clickOn(page, 'Invoices')
+  assert.equal(await shown(page), 'tab')
+  assert.equal(res.note, '2 matches on screen; used the one in the main content; the others are in the page')
+  await page.context().close()
+  page = await open('/badge-nav-sidebar')
+  res = await clickOn(page, 'Invoices')
+  assert.equal(await shown(page), 'tab')
+  assert.equal(res.note, '2 matches on screen; used the one in the main content; the others are in the navigation')
+  await page.context().close()
+})
+
+test('a partial match in the main content beats an exact one in the navigation, and the note says so', { skip }, async () => {
+  const page = await open('/overrule')
+  const res = await clickOn(page, 'Invoices')
+  assert.equal(await shown(page), 'tab')
+  assert.equal(res.note, '2 matches on screen; used the one in the main content ("Overdue invoices"); the exact match is in the navigation')
+  await page.context().close()
+})
+
+test('an exact match wins; a partial match elsewhere is mentioned, one beside it is not', { skip }, async () => {
+  const page = await open('/exact-wins')
+  let res = await clickOn(page, 'Invoices')
+  assert.equal(await shown(page), 'main button')
+  assert.equal(res.note, '2 matches on screen; used the exact match in the main content; partial match ("Invoices archive") in the navigation')
+  res = await clickOn(page, 'Save')
+  assert.equal(await shown(page), 'save')
+  assert.equal(res.note, undefined, '"Save as draft" beside "Save" is no surprise')
   await page.context().close()
 })
 

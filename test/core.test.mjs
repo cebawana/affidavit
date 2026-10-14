@@ -285,7 +285,7 @@ import { concurrencyFor } from '../src/backends/index.mjs'
 import { RESULT_FORMAT, collectRuns, loadRun, resolveRunArg, reviewRun, reviewRuns, runMany, selectRuns, writeRun } from '../src/run.mjs'
 import { SESSIONS_DIR, STATE_DIR, ensureStateDir, saveSession, sessionFor, sessionPath } from '../src/session.mjs'
 import { execFileSync } from 'node:child_process'
-import { loginFormVisible, onLoginPath, perform, ready, readyNote } from '../src/browser.mjs'
+import { exactName, loginFormVisible, onLoginPath, perform, ready, readyNote } from '../src/browser.mjs'
 import { signInStep } from '../src/executor.mjs'
 import { sessionsCheck } from '../src/init.mjs'
 import { chmodSync, statSync } from 'node:fs'
@@ -599,17 +599,21 @@ function fakeApp({ token = 'one', session = null, loginPath = '/login', redirect
     if (p === '/invoices') return ['Invoices', 'INV-0042', 'Sign out']
     return []
   }
-  const el = name => ({
-    filter: () => el(name), first: () => el(name), nth: () => el(name),
-    count: async () => (texts().includes(name) ? 1 : 0),
-    isDisabled: async () => false,
-    scrollIntoViewIfNeeded: async () => {},
-    fill: async v => { if (name === 'Email') st.email = v; if (name === 'Password') st.password = v },
-    click: async () => {
-      if (name === 'Sign in' && path() === loginPath && st.email === 'admin@test' && st.password === 'pw') { st.session = token; await goto('/') }
-    },
-  })
-  const none = { filter: () => none, count: async () => 0, first: () => none, nth: () => none }
+  // `name` is a string or, as the browser asks for exact wording, a regular expression.
+  const el = name => {
+    const match = () => texts().find(t => (name instanceof RegExp ? name.test(t) : t === name))
+    return {
+      filter: () => el(name), first: () => el(name), nth: () => el(name), or: other => union(el(name), other),
+      count: async () => (match() ? 1 : 0),
+      isDisabled: async () => false,
+      scrollIntoViewIfNeeded: async () => {},
+      fill: async v => { if (match() === 'Email') st.email = v; if (match() === 'Password') st.password = v },
+      click: async () => {
+        if (match() === 'Sign in' && path() === loginPath && st.email === 'admin@test' && st.password === 'pw') { st.session = token; await goto('/') }
+      },
+    }
+  }
+  const none = { filter: () => none, count: async () => 0, first: () => none, nth: () => none, or: other => other }
   const page = {
     goto, url: () => st.url, reload: async () => {},
     getByText: t => el(t), getByLabel: t => el(t), getByPlaceholder: () => none,
@@ -620,6 +624,19 @@ function fakeApp({ token = 'one', session = null, loginPath = '/login', redirect
   // A fresh context starts with nothing stored: the pretend browser forgets the session.
   const fresh = async () => { st.session = null; st.forgot = true; return page }
   return { page, st, fresh }
+}
+
+function union(a, b) {
+  const pick = async () => ((await a.count()) ? a : b)
+  const u = {
+    filter: () => u, first: () => u, nth: () => u, or: other => union(u, other),
+    count: async () => (await a.count()) + (await b.count()),
+    isDisabled: async () => (await pick()).isDisabled(),
+    click: async () => (await pick()).click(),
+    fill: async v => (await pick()).fill(v),
+    scrollIntoViewIfNeeded: async () => {},
+  }
+  return u
 }
 
 const CREDS = { email: 'admin@test', password: 'pw' }
@@ -774,12 +791,13 @@ test('a disabled control gets the find timeout to become enabled before the clic
     let asked = 0
     const clicks = []
     const loc = {
-      filter: () => loc, first: () => loc, nth: () => loc, count: async () => 1,
+      filter: () => loc, first: () => loc, nth: () => loc, or: other => union(loc, other), count: async () => 1,
       isDisabled: async () => asked++ < disabledFor, click: async () => clicks.push(1), scrollIntoViewIfNeeded: async () => {},
     }
-    const none = { filter: () => none, count: async () => 0, first: () => none, nth: () => none }
+    const none = { filter: () => none, count: async () => 0, first: () => none, nth: () => none, or: other => other }
+    const is = (name, text) => (name instanceof RegExp ? name.test(text) : name === text)
     const page = {
-      getByRole: (role, opts) => (role === 'button' && opts?.name === 'Save' ? loc : none),
+      getByRole: (role, opts) => (role === 'button' && is(opts?.name, 'Save') ? loc : none),
       getByText: () => none, getByLabel: () => none, getByPlaceholder: () => none,
       waitForLoadState: async () => {}, evaluate: async () => true,
     }
@@ -798,4 +816,12 @@ test('a disabled control gets the find timeout to become enabled before the clic
   assert.equal(stuck.note, '"Save" is visible but disabled (still disabled after 1s)')
   assert.ok(Date.now() - started >= 1000, 'waited the find timeout first')
   assert.equal(never.clicks.length, 0)
+})
+
+test('exact wording allows a trailing count, nothing else', () => {
+  const invoices = exactName('Invoices')
+  for (const yes of ['Invoices', 'Invoices 3', 'Invoices3', 'Invoices · 2', 'Invoices (12)', 'Invoices [4]', 'Invoices: 7', 'Invoices - 1']) assert.ok(invoices.test(yes), yes)
+  for (const no of ['invoices', 'All invoices', 'Invoices overdue', 'Invoices 3 more', '3 Invoices', 'Invoice']) assert.ok(!invoices.test(no), no)
+  assert.ok(exactName('Save (draft)').test('Save (draft)'), 'the wording itself is taken literally')
+  assert.ok(!exactName('Save (draft)').test('Save draft'))
 })
