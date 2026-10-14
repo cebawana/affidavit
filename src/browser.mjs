@@ -77,6 +77,14 @@ async function findClickable(root, name) {
   return null
 }
 
+async function findInScopes(page, name) {
+  for (const root of await scopes(page)) {
+    const hit = await findClickable(root, name)
+    if (hit) return hit
+  }
+  return null
+}
+
 async function findNear(page, name, near) {
   for (const root of await scopes(page)) {
     const anchors = root.getByText(near).filter({ visible: true })
@@ -132,6 +140,7 @@ async function findText(page, text) {
 
 const QUIET_MS = 300 // nothing on screen changed for this long: the page is ready
 const NOTEWORTHY_MS = 1000 // a shorter wait is normal page loading, not worth a note
+const NETWORK_MS = 1000 // the network gets this long to go idle; after that the screen decides
 
 /**
  * Runs inside the page: resolves true once `quiet` ms pass with no change to
@@ -176,16 +185,21 @@ function quietWindow({ quiet, limit }) {
  * itself is checked again at click time: Playwright acts only on an element
  * whose box has stopped moving.
  *
- * @returns {{ waitedMs: number, quiet: boolean }}
+ * @returns {{ waitedMs: number, quiet: boolean, networkBusy: boolean }}
  */
 export async function ready(page, budget) {
   const started = Date.now()
   const left = () => budget - (Date.now() - started)
   let quiet = false
+  let networkBusy = false
   try {
     while (left() > 0 && !quiet) {
       await page.waitForLoadState('load', { timeout: left() }).catch(() => {})
-      if (left() > 0) await page.waitForLoadState('networkidle', { timeout: left() }).catch(() => {})
+      if (left() <= 0) break
+      // A page that polls (notifications, a dashboard that refreshes) never
+      // goes idle, and a person does not wait for it: the network gets a
+      // moment, so a bundle still on its way can arrive, then the screen decides.
+      networkBusy = !(await page.waitForLoadState('networkidle', { timeout: Math.min(left(), NETWORK_MS) }).then(() => true, () => false))
       if (left() <= 0) break
       // A navigation while we watch destroys the page's context: start over
       // with the new page. The deadline keeps one watch short, so a page that
@@ -194,14 +208,15 @@ export async function ready(page, budget) {
       quiet = await page.evaluate(quietWindow, { quiet: QUIET_MS, limit }).catch(() => sleep(100).then(() => false))
     }
   } catch { /* readiness is a courtesy to the action, never a reason to skip it */ }
-  return { waitedMs: Date.now() - started, quiet }
+  return { waitedMs: Date.now() - started, quiet, networkBusy }
 }
 
 /** The note an action carries when the wait before it was long enough to matter. */
-export function readyNote({ waitedMs, quiet }) {
+export function readyNote({ waitedMs, quiet, networkBusy }) {
   if (waitedMs < NOTEWORTHY_MS) return undefined
   const secs = `${(waitedMs / 1000).toFixed(1)}s`
-  return quiet ? `waited ${secs} for the page to be ready` : `the page was still changing after ${secs}; acted anyway`
+  if (!quiet) return `the screen kept changing for ${secs}; acted anyway`
+  return `waited ${secs} for the page to be ready${networkBusy ? '; the network stayed busy but the screen was still' : ''}`
 }
 
 /** Actions that touch the page, so they wait for it to be ready first. */
@@ -253,16 +268,23 @@ async function act(page, ctx, action) {
         await page.reload({ waitUntil: 'domcontentloaded' })
         return { ok: true }
       case 'click': {
+        // Many apps disable a control until their script has taken over, so a
+        // click that failed at once would read as broken: disabled counts as
+        // "not clickable yet" for as long as finding it would. A spec that
+        // expects a disabled control says so with `expect:`, so nothing waits there.
+        let disabled = null
         const hit = await poll(async () => {
-          if (action.near) return findNear(page, action.target, action.near)
-          for (const root of await scopes(page)) {
-            const h = await findClickable(root, action.target)
-            if (h) return h
-          }
-          return null
+          const h = action.near ? await findNear(page, action.target, action.near) : await findInScopes(page, action.target)
+          if (!h) return null
+          if (await h.loc.isDisabled().catch(() => false)) { disabled = h; return null }
+          disabled = null
+          return h
         }, find)
-        if (!hit) return miss(`"${action.target}"${action.near ? ` near "${action.near}"` : ''}`)
-        if (await hit.loc.isDisabled().catch(() => false)) return { ok: false, note: `"${action.target}" is visible but disabled` }
+        if (!hit) {
+          return disabled
+            ? { ok: false, note: `"${action.target}" is visible but disabled (still disabled after ${find / 1000}s)` }
+            : miss(`"${action.target}"${action.near ? ` near "${action.near}"` : ''}`)
+        }
         await hit.loc.click({ timeout: 5000 })
         return { ok: true, note: many(hit) }
       }

@@ -743,8 +743,9 @@ test('the state folder gitignores itself, so an upgraded project cannot commit s
 
 test('the wait before an action is noted only when it was long, and never stops the action', async () => {
   assert.equal(readyNote({ waitedMs: 800, quiet: true }), undefined, 'under a second is ordinary loading')
-  assert.equal(readyNote({ waitedMs: 2340, quiet: true }), 'waited 2.3s for the page to be ready')
-  assert.equal(readyNote({ waitedMs: 5010, quiet: false }), 'the page was still changing after 5.0s; acted anyway')
+  assert.equal(readyNote({ waitedMs: 2340, quiet: true, networkBusy: false }), 'waited 2.3s for the page to be ready')
+  assert.equal(readyNote({ waitedMs: 1310, quiet: true, networkBusy: true }), 'waited 1.3s for the page to be ready; the network stayed busy but the screen was still')
+  assert.equal(readyNote({ waitedMs: 5010, quiet: false, networkBusy: true }), 'the screen kept changing for 5.0s; acted anyway')
 
   // A page that is still changing when every watch ends: the budget is spent, then the action goes ahead.
   const busy = { ...fakeApp().page, evaluate: async (_fn, { limit }) => { await tick(limit); return false } }
@@ -755,14 +756,46 @@ test('the wait before an action is noted only when it was long, and never stops 
   await busy.goto('/login')
   const res = await perform(busy, ctx, { kind: 'click', target: 'Sign in', text: 'click "Sign in"' })
   assert.equal(res.ok, true)
-  assert.equal(res.note, 'the page was still changing after 1.1s; acted anyway')
+  assert.equal(res.note, 'the screen kept changing for 1.1s; acted anyway')
   // The note sits after the action's own, so a failure reads first.
   const miss = await perform(busy, ctx, { kind: 'click', target: 'Nowhere', text: 'click "Nowhere"' })
   assert.equal(miss.ok, false)
-  assert.equal(miss.note, 'Could not see "Nowhere" on screen; the page was still changing after 1.1s; acted anyway')
+  assert.equal(miss.note, 'Could not see "Nowhere" on screen; the screen kept changing for 1.1s; acted anyway')
   // No budget: no wait at all, and the page's readiness check is never run.
   const never = { ...busy, evaluate: async () => { throw new Error('should not be asked') } }
   const none = await ready(never, 0)
   assert.equal(none.quiet, false)
   assert.ok(none.waitedMs < 100)
+})
+
+test('a disabled control gets the find timeout to become enabled before the click is reported as failed', async () => {
+  // A page with one button that answers "disabled" the first `disabledFor` times it is asked.
+  const button = (disabledFor) => {
+    let asked = 0
+    const clicks = []
+    const loc = {
+      filter: () => loc, first: () => loc, nth: () => loc, count: async () => 1,
+      isDisabled: async () => asked++ < disabledFor, click: async () => clicks.push(1), scrollIntoViewIfNeeded: async () => {},
+    }
+    const none = { filter: () => none, count: async () => 0, first: () => none, nth: () => none }
+    const page = {
+      getByRole: (role, opts) => (role === 'button' && opts?.name === 'Save' ? loc : none),
+      getByText: () => none, getByLabel: () => none, getByPlaceholder: () => none,
+      waitForLoadState: async () => {}, evaluate: async () => true,
+    }
+    return { page, clicks }
+  }
+  const ctx = { ...fastCtx(), timeouts: { ...fastCtx().timeouts, find: 1000, ready: 0 } }
+  const save = { kind: 'click', target: 'Save', text: 'click "Save"' }
+  const later = button(2)
+  const res = await perform(later.page, ctx, save)
+  assert.equal(res.ok, true, res.note)
+  assert.equal(later.clicks.length, 1, 'clicked once it was enabled')
+  const never = button(Infinity)
+  const started = Date.now()
+  const stuck = await perform(never.page, ctx, save)
+  assert.equal(stuck.ok, false)
+  assert.equal(stuck.note, '"Save" is visible but disabled (still disabled after 1s)')
+  assert.ok(Date.now() - started >= 1000, 'waited the find timeout first')
+  assert.equal(never.clicks.length, 0)
 })

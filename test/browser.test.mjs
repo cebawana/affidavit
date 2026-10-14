@@ -27,6 +27,15 @@ const PAGES = {
     }, 600)</script>`,
   // Nothing to wait for.
   '/ready': `<!doctype html><title>Ready</title><h1>Invoice</h1><button onclick="document.getElementById('out').textContent='Saved'">Save</button><p id="out"></p>`,
+  // Polls the network every 300 ms (notifications, a refreshing dashboard)
+  // while the screen stays still: the network never goes idle.
+  '/polling': `<!doctype html><title>Polling</title><h1>Invoice</h1><button onclick="document.getElementById('out').textContent='Saved'">Save</button><p id="out"></p>
+    <script>setInterval(() => fetch('/ping'), 300)</script>`,
+  // The button is disabled until the script has taken over, 1.2 s in.
+  '/enabled-later': `<!doctype html><title>Later</title><h1>Invoice</h1><button disabled onclick="document.getElementById('out').textContent='Saved'">Save</button><p id="out"></p>
+    <script>setTimeout(() => { document.querySelector('button').disabled = false }, 1200)</script>`,
+  // Disabled for good.
+  '/never-enabled': `<!doctype html><title>Never</title><h1>Invoice</h1><button disabled>Save</button><p id="out"></p>`,
   // A live clock: the page never stops changing, and is acted on anyway.
   '/ticking': `<!doctype html><title>Ticking</title><h1>Invoice</h1><span id="clock"></span>
     <button onclick="document.getElementById('out').textContent='Saved'">Save</button><p id="out"></p>
@@ -42,6 +51,7 @@ const server = createServer((req, res) => {
     }, Number(url.searchParams.get('delay') ?? 0))
     return
   }
+  if (url.pathname === '/ping') { res.statusCode = 204; res.end(); return }
   const html = PAGES[url.pathname]
   res.statusCode = html ? 200 : 404
   res.setHeader('content-type', 'text/html')
@@ -60,7 +70,7 @@ after(async () => {
 })
 const skip = browser ? false : 'Google Chrome is not installed'
 
-const ctx = readyMs => ({ base, notFoundText: null, auth: null, timeouts: { find: 3000, gone: 3000, signIn: 3000, ready: readyMs } })
+const ctx = (readyMs, find = 3000) => ({ base, notFoundText: null, auth: null, timeouts: { find, gone: 3000, signIn: 3000, ready: readyMs } })
 const click = (page, c) => perform(page, c, { kind: 'click', target: 'Save', text: 'click "Save"' })
 const saved = page => textVisible(page, 'Saved', 1500)
 
@@ -106,6 +116,33 @@ test('a page that is ready at once is acted on at once, with no note', { skip },
   await page.context().close()
 })
 
+test('a page that keeps the network busy gets a moment, then the screen decides', { skip }, async () => {
+  const page = await open('/polling')
+  const started = Date.now()
+  const res = await click(page, ctx(5000))
+  assert.equal(res.ok, true)
+  assert.ok(Date.now() - started < 2500, `the network wait is capped, not the whole budget (${Date.now() - started}ms)`)
+  assert.match(res.note, /^waited 1\.\ds for the page to be ready; the network stayed busy but the screen was still$/, res.note)
+  assert.equal(await saved(page), true)
+  await page.context().close()
+})
+
+test('a control disabled until the page is ready gets time to become enabled; one that never does is reported', { skip }, async () => {
+  let page = await open('/enabled-later')
+  const res = await click(page, ctx(5000))
+  assert.equal(res.ok, true, res.note)
+  assert.equal(await saved(page), true, 'the click landed once the button was enabled')
+  await page.context().close()
+
+  page = await open('/never-enabled')
+  const started = Date.now()
+  const stuck = await click(page, ctx(5000, 1000))
+  assert.equal(stuck.ok, false)
+  assert.equal(stuck.note, '"Save" is visible but disabled (still disabled after 1s)')
+  assert.ok(Date.now() - started >= 1000, 'given the find timeout to become enabled')
+  await page.context().close()
+})
+
 test('a page that never stops changing is acted on when the budget is spent, and the note says so', { skip }, async () => {
   const page = await open('/ticking')
   const wait = await ready(page, 1200)
@@ -113,7 +150,7 @@ test('a page that never stops changing is acted on when the budget is spent, and
   assert.ok(wait.waitedMs >= 1200 && wait.waitedMs < 4000, `spent the budget and no more (${wait.waitedMs}ms)`)
   const res = await click(page, ctx(1200))
   assert.equal(res.ok, true)
-  assert.match(res.note, /^the page was still changing after 1\.\ds; acted anyway$/)
+  assert.match(res.note, /^the screen kept changing for 1\.\ds; acted anyway$/)
   assert.equal(await saved(page), true)
   await page.context().close()
 })
