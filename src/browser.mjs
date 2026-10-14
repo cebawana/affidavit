@@ -65,14 +65,62 @@ async function scopes(page) {
   return n ? [dialogs.nth(n - 1), page] : [page]
 }
 
+/**
+ * Where on the page an element sits, as a person would describe it: in the
+ * open dialog, the main content, the navigation (a sidebar, the page's header
+ * or footer), or just the page. Runs in the browser; it reads landmarks only.
+ */
+function regionOf(el) {
+  let pending = null
+  for (let n = el; n && n.tagName !== 'BODY'; n = n.parentElement) {
+    const role = (n.getAttribute('role') || '').toLowerCase()
+    const tag = n.tagName.toLowerCase()
+    if (tag === 'dialog' || role === 'dialog' || role === 'alertdialog') return 'dialog'
+    if (tag === 'main' || role === 'main') return 'main'
+    if (tag === 'nav' || tag === 'aside' || ['navigation', 'banner', 'contentinfo', 'complementary'].includes(role)) return 'navigation'
+    // The page's own header or footer is chrome; a card's header inside an article is content.
+    if (tag === 'header' || tag === 'footer') pending = 'navigation'
+    if (tag === 'article' || tag === 'section' || tag === 'form') pending = null
+  }
+  return pending ?? 'page'
+}
+
+const REGION_RANK = { dialog: 0, main: 1, page: 2, navigation: 3 }
+const REGION_NAME = { dialog: 'the open dialog', main: 'the main content', page: 'the page', navigation: 'the navigation' }
+const MAX_CANDIDATES = 5 // per role; enough to rank, cheap to classify
+
+/**
+ * Among several visible matches, the one a person most likely means: in the
+ * open dialog first, then the main content, then the rest of the page, then
+ * the navigation. `click "Invoices"` is the tab in front of you, not the
+ * sidebar link of the same name. Among equals, the role order and then the
+ * order on the page decide. A single match is returned untouched.
+ */
+async function pick(found, count) {
+  if (found.length === 1) return { loc: found[0].loc, count }
+  for (const c of found) c.region = await c.loc.evaluate(regionOf).catch(() => 'page')
+  found.sort((a, b) => REGION_RANK[a.region] - REGION_RANK[b.region] || a.order - b.order || a.index - b.index)
+  const [best, ...rest] = found
+  return { loc: best.loc, count, region: best.region, others: [...new Set(rest.map(c => c.region))] }
+}
+
+/** The visible matches for `name`, exact wording first, ranked by where they sit. */
 async function findClickable(root, name) {
   for (const exact of [true, false]) {
-    for (const role of CLICK_ROLES) {
-      const hit = await firstVisible(root.getByRole(role, { name, exact }))
-      if (hit) return hit
+    const found = []
+    let count = 0
+    for (const [order, role] of CLICK_ROLES.entries()) {
+      const vis = root.getByRole(role, { name, exact }).filter({ visible: true })
+      const n = await vis.count()
+      count += n
+      for (let index = 0; index < Math.min(n, MAX_CANDIDATES); index++) found.push({ loc: vis.nth(index), order, index })
     }
-    const hit = await firstVisible(root.getByText(name, { exact }))
-    if (hit) return hit
+    if (!found.length) {
+      const vis = root.getByText(name, { exact }).filter({ visible: true })
+      count = await vis.count()
+      for (let index = 0; index < Math.min(count, MAX_CANDIDATES); index++) found.push({ loc: vis.nth(index), order: 0, index })
+    }
+    if (found.length) return pick(found, count)
   }
   return null
 }
@@ -245,7 +293,12 @@ export async function perform(page, ctx, action) {
 async function act(page, ctx, action) {
   const { find, gone: goneTimeout } = ctx.timeouts
   const miss = what => ({ ok: false, note: `Could not see ${what} on screen` })
-  const many = hit => (hit.count > 1 ? `${hit.count} matches on screen; used the first` : undefined)
+  const many = hit => {
+    if (hit.count <= 1) return undefined
+    const others = hit.others?.filter(r => r !== hit.region) ?? []
+    if (!hit.region || !others.length) return `${hit.count} matches on screen${hit.region ? `, all in ${REGION_NAME[hit.region]}` : ''}; used the first`
+    return `${hit.count} matches on screen; used the one in ${REGION_NAME[hit.region]}; the others are in ${others.map(r => REGION_NAME[r]).join(' and ')}`
+  }
   try {
     switch (action.kind) {
       case 'open': {

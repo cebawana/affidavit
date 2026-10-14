@@ -36,6 +36,22 @@ const PAGES = {
     <script>setTimeout(() => { document.querySelector('button').disabled = false }, 1200)</script>`,
   // Disabled for good.
   '/never-enabled': `<!doctype html><title>Never</title><h1>Invoice</h1><button disabled>Save</button><p id="out"></p>`,
+  // The same words in the sidebar and in the page: a person means the tab in front of them.
+  '/ambiguous': `<!doctype html><title>Ambiguous</title>
+    <nav><a href="#" onclick="out('nav link')">Invoices</a><a href="#" onclick="out('nav link')">Settings</a></nav>
+    <main><div role="tablist"><button role="tab" onclick="out('tab')">Invoices</button></div>
+      <button onclick="out('body button')">Settings</button><p id="out"></p></main>
+    <script>function out(t) { document.getElementById('out').textContent = t }</script>`,
+  // No <main>: the page body still beats the page header, and a card's own header is content, not chrome.
+  '/no-main': `<!doctype html><title>No main</title>
+    <header><a href="#" onclick="out('header')">Settings</a><a href="#" onclick="out('header')">Edit</a></header>
+    <div><button onclick="out('body')">Settings</button></div>
+    <article><header><button onclick="out('card')">Edit</button></header></article><p id="out"></p>
+    <script>function out(t) { document.getElementById('out').textContent = t }</script>`,
+  // Three of the same in one region: the first, and the note says where they all are.
+  '/same-region': `<!doctype html><title>Same</title>
+    <nav><a href="#" onclick="out('first')">More</a><a href="#" onclick="out('second')">More</a><a href="#" onclick="out('third')">More</a></nav><p id="out"></p>
+    <script>function out(t) { document.getElementById('out').textContent = t }</script>`,
   // A live clock: the page never stops changing, and is acted on anyway.
   '/ticking': `<!doctype html><title>Ticking</title><h1>Invoice</h1><span id="clock"></span>
     <button onclick="document.getElementById('out').textContent='Saved'">Save</button><p id="out"></p>
@@ -140,6 +156,39 @@ test('a control disabled until the page is ready gets time to become enabled; on
   assert.equal(stuck.ok, false)
   assert.equal(stuck.note, '"Save" is visible but disabled (still disabled after 1s)')
   assert.ok(Date.now() - started >= 1000, 'given the find timeout to become enabled')
+  await page.context().close()
+})
+
+const clickOn = (page, target) => perform(page, ctx(5000), { kind: 'click', target, text: `click "${target}"` })
+const shown = page => page.locator('#out').textContent()
+
+test('a same-named sidebar link and in-page tab: the tab is clicked, and the report says so', { skip }, async () => {
+  const page = await open('/ambiguous')
+  let res = await clickOn(page, 'Invoices')
+  assert.equal(res.ok, true)
+  assert.equal(await shown(page), 'tab')
+  assert.equal(res.note, '2 matches on screen; used the one in the main content; the others are in the navigation')
+  res = await clickOn(page, 'Settings')
+  assert.equal(await shown(page), 'body button', 'a plain button in main beats a nav link')
+  await page.context().close()
+})
+
+test('without a <main>, the page body beats the page header, and a card header is content', { skip }, async () => {
+  const page = await open('/no-main')
+  let res = await clickOn(page, 'Settings')
+  assert.equal(await shown(page), 'body')
+  assert.equal(res.note, '2 matches on screen; used the one in the page; the others are in the navigation')
+  res = await clickOn(page, 'Edit')
+  assert.equal(await shown(page), 'card', 'a header inside an article is not the page header')
+  assert.equal(res.note, '2 matches on screen; used the one in the page; the others are in the navigation')
+  await page.context().close()
+})
+
+test('several matches in one region: the first, and the note says where they all are', { skip }, async () => {
+  const page = await open('/same-region')
+  const res = await clickOn(page, 'More')
+  assert.equal(await shown(page), 'first')
+  assert.equal(res.note, '3 matches on screen, all in the navigation; used the first')
   await page.context().close()
 })
 

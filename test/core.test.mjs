@@ -613,7 +613,7 @@ function fakeApp({ token = 'one', session = null, loginPath = '/login', redirect
   const page = {
     goto, url: () => st.url, reload: async () => {},
     getByText: t => el(t), getByLabel: t => el(t), getByPlaceholder: () => none,
-    getByRole: (role, opts) => (role === 'dialog' || !opts?.name ? none : el(opts.name)),
+    getByRole: (role, opts) => (role === 'button' && opts?.name ? el(opts.name) : none),
     waitForLoadState: async () => {}, evaluate: async () => true, screenshot: async () => PNG, keyboard: { press: async () => {} },
     context: () => ({ storageState: async () => ({ cookies: [{ name: 'session', value: st.session }], origins: [] }) }),
   }
