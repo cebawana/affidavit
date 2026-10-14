@@ -173,11 +173,10 @@ link and an in-page tab of that name clicks the tab: among visible matches the
 browser prefers the open dialog, then the main content, then the rest of the
 page, then the navigation (a sidebar, the page's header or footer). Exact
 wording comes first, and a trailing count still counts as exact ("Invoices 3",
-"Pending · 2", "Inbox (12)"). Place outranks wording in one case: when every
-exact match sits outside the dialog and the main content and a partial match
-sits inside one, the partial match wins (the sidebar's "Invoices" against the
-page's "Overdue invoices" tab). The action's note in the report says how many
-matched, which one was used and where the others are, so a surprising click
+"Pending · 2", "Inbox (12)"). A partial match never outranks an exact one,
+wherever it sits: `click "Save"` is never "Save as draft". The action's note
+in the report says how many matched, which one was used and where the others
+are, including a partial match elsewhere on the page, so a questionable click
 is never silent. `click "Text" near "Row text"` still pins the choice when
 the page itself is ambiguous.
 

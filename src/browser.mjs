@@ -109,11 +109,11 @@ export const exactName = name => new RegExp(`^${escapeRegExp(name.trim())}(?:\\s
  * wording comes first; among equals, where it sits decides: the open dialog,
  * then the main content, then the rest of the page, then the navigation —
  * `click "Invoices"` is the tab in front of you, not the sidebar link of the
- * same name. Place outranks wording in one case: when every exact match is
- * outside the dialog and the main content and a partial match is inside one,
- * the partial match wins (the sidebar's "Invoices" against the page's
- * "Overdue invoices" tab). The note says which, so a surprising pick is
- * never silent.
+ * same name. A partial match never outranks an exact one, wherever it sits:
+ * `click "Save"` must not land on "Save as draft" because that sits in the
+ * main content, since the run would go on and judge the wrong flow. A partial
+ * match in another place is named in the note instead, so a questionable
+ * pick is visible.
  */
 async function pick(exact, nExact, partial, nPartial) {
   const place = async (loc, index) => ({ loc, index, ...(await loc.evaluate(placeOf).catch(() => ({ region: 'page', key: `?${index}`, name: '' }))) })
@@ -128,17 +128,15 @@ async function pick(exact, nExact, partial, nPartial) {
   const byPlace = (a, b) => REGION_RANK[a.region] - REGION_RANK[b.region] || a.index - b.index
   exacts.sort(byPlace)
   partials.sort(byPlace)
-  const overruled = Boolean(exacts.length && partials.length
-    && REGION_RANK[exacts[0].region] >= REGION_RANK.page && REGION_RANK[partials[0].region] <= REGION_RANK.main)
-  const chosen = overruled || !exacts.length ? partials[0] : exacts[0]
-  return { loc: chosen.loc, count: Math.max(nExact, nPartial), region: chosen.region, chosen, exacts, partials, overruled }
+  const chosen = exacts[0] ?? partials[0]
+  return { loc: chosen.loc, count: Math.max(nExact, nPartial), region: chosen.region, chosen, exacts, partials }
 }
 
 /** What the report says when more than one thing matched. */
 export function choiceNote(hit) {
   if (hit.count <= 1) return undefined
   if (!hit.chosen) return `${hit.count} matches on screen; used the first`
-  const { chosen, exacts, overruled } = hit
+  const { chosen, exacts } = hit
   const at = REGION_NAME[chosen.region]
   const where = cs => [...new Set(cs.map(c => c.region))].map(r => REGION_NAME[r]).join(' and ')
   const named = cs => cs.map(c => `"${c.name}"`).join(', ')
@@ -150,10 +148,6 @@ export function choiceNote(hit) {
   const count = exacts.length + partials.length
   if (count <= 1) return undefined
   const head = `${count} matches on screen`
-  if (overruled) {
-    return `${head}; used the one in ${at} (${named([chosen])}); the exact match${exacts.length > 1 ? 'es are' : ' is'} in ${where(exacts)}`
-      + (others.length ? `; other partial matches in ${where(others)}` : '')
-  }
   if (exacts.includes(chosen) && partials.length) {
     return `${head}; used the exact match in ${at}`
       + (others.length ? `; other exact matches in ${where(others)}` : '')

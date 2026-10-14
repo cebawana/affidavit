@@ -57,10 +57,22 @@ const PAGES = {
     <nav><a href="#" onclick="out('sidebar link')">Invoices</a></nav>
     <main><div role="tablist"><button role="tab" onclick="out('tab')">Invoices <span class="badge">3</span></button></div><p id="out"></p></main>
     <script>function out(t) { document.getElementById('out').textContent = t }</script>`,
-  // Only a partial match in the main content against an exact one in the sidebar: place wins, and the note says so.
-  '/overrule': `<!doctype html><title>Overrule</title>
+  // Only a partial match in the main content against an exact one in the sidebar: the exact one, and the note names the other.
+  '/partial-in-main': `<!doctype html><title>Partial</title>
     <nav><a href="#" onclick="out('sidebar link')">Invoices</a></nav>
     <main><div role="tablist"><button role="tab" onclick="out('tab')">Overdue invoices</button></div><p id="out"></p></main>
+    <script>function out(t) { document.getElementById('out').textContent = t }</script>`,
+  // Short generic words: the header's "New" menu, "More" and "Save" are what the spec means, never the
+  // longer control in the main content that happens to start with the same word.
+  '/generic-header': `<!doctype html><title>Generic</title>
+    <header><button onclick="out('New')">New</button><button onclick="out('More')">More</button></header>
+    <div class="toolbar"><button onclick="out('Save')">Save</button></div>
+    <main><button onclick="out('New bookmark')">New bookmark</button><button onclick="out('More filters')">More filters</button>
+      <button onclick="out('Save as draft')">Save as draft</button><p id="out"></p></main>
+    <script>function out(t) { document.getElementById('out').textContent = t }</script>`,
+  '/generic-divbar': `<!doctype html><title>Generic bar</title>
+    <div class="topbar"><button onclick="out('New')">New</button></div>
+    <main><button onclick="out('New invoice')">New invoice</button><p id="out"></p></main>
     <script>function out(t) { document.getElementById('out').textContent = t }</script>`,
   // The exact match is in the main content; a partial one elsewhere is mentioned, a partial one beside it is not.
   '/exact-wins': `<!doctype html><title>Exact</title>
@@ -217,11 +229,26 @@ test('a tab with a count badge is still the exact match, whatever the sidebar is
   await page.context().close()
 })
 
-test('a partial match in the main content beats an exact one in the navigation, and the note says so', { skip }, async () => {
-  const page = await open('/overrule')
-  const res = await clickOn(page, 'Invoices')
-  assert.equal(await shown(page), 'tab')
-  assert.equal(res.note, '2 matches on screen; used the one in the main content ("Overdue invoices"); the exact match is in the navigation')
+test('a partial match never outranks an exact one, wherever it sits; the note names it', { skip }, async () => {
+  let page = await open('/partial-in-main')
+  let res = await clickOn(page, 'Invoices')
+  assert.equal(await shown(page), 'sidebar link')
+  assert.equal(res.note, '2 matches on screen; used the exact match in the navigation; partial match ("Overdue invoices") in the main content')
+  await page.context().close()
+
+  // The review's rows: short generic words must keep meaning the control with exactly those words.
+  page = await open('/generic-header')
+  for (const [word, partial, where] of [['New', 'New bookmark', 'the navigation'], ['More', 'More filters', 'the navigation'], ['Save', 'Save as draft', 'the page']]) {
+    res = await clickOn(page, word)
+    assert.equal(await shown(page), word, `click "${word}" is "${word}", not "${partial}"`)
+    assert.equal(res.note, `2 matches on screen; used the exact match in ${where}; partial match ("${partial}") in the main content`)
+  }
+  await page.context().close()
+
+  page = await open('/generic-divbar')
+  res = await clickOn(page, 'New')
+  assert.equal(await shown(page), 'New')
+  assert.equal(res.note, '2 matches on screen; used the exact match in the page; partial match ("New invoice") in the main content')
   await page.context().close()
 })
 
