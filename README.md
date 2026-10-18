@@ -193,8 +193,9 @@ costs about a second, not the budget. A `click` on a control that is disabled
 gives it `timeouts.find` to become enabled before reporting it, because many
 apps disable their buttons until their script is ready. A wait of a second or
 more is noted on the action in the report ("waited 2.3s for the page to be
-ready", "the screen kept changing for 5.0s; acted anyway"), so slow pages are
-visible without hiding real failures. If every action says the screen kept
+ready", "the screen kept changing for 5.0s; acted anyway", "\"Save\" was
+disabled for 2.4s before it could be clicked"), so slow pages are visible
+without hiding real failures. If every action says the screen kept
 changing, something on the page never stops moving; lower `timeouts.ready` for
 that project.
 

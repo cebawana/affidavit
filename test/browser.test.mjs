@@ -31,9 +31,9 @@ const PAGES = {
   // while the screen stays still: the network never goes idle.
   '/polling': `<!doctype html><title>Polling</title><h1>Invoice</h1><button onclick="document.getElementById('out').textContent='Saved'">Save</button><p id="out"></p>
     <script>setInterval(() => fetch('/ping'), 300)</script>`,
-  // The button is disabled until the script has taken over, 1.2 s in.
+  // The button is disabled until the script has taken over, 2 s in.
   '/enabled-later': `<!doctype html><title>Later</title><h1>Invoice</h1><button disabled onclick="document.getElementById('out').textContent='Saved'">Save</button><p id="out"></p>
-    <script>setTimeout(() => { document.querySelector('button').disabled = false }, 1200)</script>`,
+    <script>setTimeout(() => { document.querySelector('button').disabled = false }, 2000)</script>`,
   // Disabled for good.
   '/never-enabled': `<!doctype html><title>Never</title><h1>Invoice</h1><button disabled>Save</button><p id="out"></p>`,
   // The same words in the sidebar and in the page: a person means the tab in front of them.
@@ -180,6 +180,7 @@ test('a control disabled until the page is ready gets time to become enabled; on
   const res = await click(page, ctx(5000))
   assert.equal(res.ok, true, res.note)
   assert.equal(await saved(page), true, 'the click landed once the button was enabled')
+  assert.match(res.note, /^"Save" was disabled for 1\.\ds before it could be clicked$/, `a wait that long is noted (${res.note})`)
   await page.context().close()
 
   page = await open('/never-enabled')
