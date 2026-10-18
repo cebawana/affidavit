@@ -165,8 +165,20 @@ An admin sends invoice INV-0042 and sees it marked as sent.
 **Actions:** `open "/path"` · `click "Text"` · `click "Text" near "Row text"` ·
 `fill "Label" with "value"` · `select "Label" option "Option"` ·
 `check "Label"` / `uncheck "Label"` · `press "Escape"` · `wait for "Text"` ·
-`wait until gone "Text"` · `scroll to "Text"` · `reload`.
+`wait for exactly "Text"` · `wait until gone "Text"` ·
+`wait until gone exactly "Text"` · `scroll to "Text"` · `reload`.
 `{run}` becomes a short unique id per run, `{today}` becomes `YYYY-MM-DD`.
+
+**Waiting for words.** `wait for "Saved"` waits for something that says
+exactly "Saved" (a trailing count still counts, as for clicks), not for the
+"Saved" inside "Unsaved changes" or "Saved views" that is already on screen.
+Only if nothing ever says the exact words does a longer text containing them
+count, and the action's note names it ("matched inside \"Unsaved changes\";
+nothing says exactly \"Saved\""), since it may not be the confirmation the
+spec meant. `wait for exactly "Saved"` never falls back. `wait until gone
+"Saved"` is over once nothing says exactly "Saved", however long "Unsaved
+changes" stays in the sidebar; when nothing ever said the exact words, the
+longer text has to go, and a timeout names it.
 
 **When several things match.** `click "Invoices"` on a page with a sidebar
 link and an in-page tab of that name clicks the tab: among visible matches the

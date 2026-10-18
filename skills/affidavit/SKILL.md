@@ -83,8 +83,13 @@ click "Text" near "Row text"      fill "Label" with "value"
 select "Label" option "Option"    check "Label" / uncheck "Label"
 press "Escape"                    wait for "Text"
 wait until gone "Text"            scroll to "Text"
-reload
+reload                            wait for exactly "Text" / wait until gone exactly "Text"
 ```
+
+`wait for "Text"` waits for something that says exactly those words; a longer
+text that contains them ("Saved" inside "Unsaved changes") counts only when
+nothing ever says them exactly, and the report notes it. `exactly` never
+falls back.
 
 For an icon-only button, target the name its tooltip or screen reader gives it
 (`click "Edit INV-0042"`). `{run}` is a short unique id per run and `{today}` is
