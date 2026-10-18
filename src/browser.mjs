@@ -330,6 +330,77 @@ export async function settle(page) {
 const UNLABELLED = 'field found by the text beside it (it has no attached label)'
 
 /**
+ * Runs in the browser, on the element about to be clicked: makes sure the
+ * point the click lands on belongs to it. Something "visible" can still sit
+ * under a bar fixed to an edge of the screen (a sticky header, a phone's tab
+ * bar), and a click there goes to the bar, as a tap would. The target is
+ * scrolled into view only when it is not already there, so an ordinary click
+ * moves nothing; then out from under an edge bar if one covers its middle;
+ * failing that a point on its uncovered part is used, the way a person taps
+ * the sliver that shows. Reads geometry only.
+ *
+ * @returns {{ position?: { x: number, y: number }, cover?: { edge: string | null, text: string } }}
+ *   `position`: the point to click, relative to the element's box, when its
+ *   middle is covered but another point is clear. `cover`: what covers it,
+ *   when no point is.
+ */
+function uncover(el) {
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  const rect = () => el.getBoundingClientRect()
+  const at = (fx, fy) => { const r = rect(); return document.elementFromPoint(r.left + r.width * fx, r.top + r.height * fy) }
+  const own = hit => Boolean(hit) && (hit === el || el.contains(hit))
+  // What covers the middle, as a person sees it: the bar it belongs to, and the edge that bar hugs.
+  const coverOf = () => {
+    const hit = at(0.5, 0.5)
+    let bar = hit
+    for (let n = hit; n && n !== document.body; n = n.parentElement) {
+      const { position } = getComputedStyle(n)
+      if (position === 'fixed' || position === 'sticky') { bar = n; break }
+    }
+    const c = bar?.getBoundingClientRect()
+    const top = c && c.top <= 1
+    const bottom = c && c.bottom >= vh - 1
+    const left = c && c.left <= 1
+    const right = c && c.right >= vw - 1
+    const edge = !c ? null : top && !bottom ? 'top' : bottom && !top ? 'bottom' : left && !right ? 'left' : right && !left ? 'right' : null
+    return { bar, edge, box: c }
+  }
+  const scroller = () => {
+    for (let n = el.parentElement; n && n !== document.body; n = n.parentElement) {
+      if (/auto|scroll/.test(getComputedStyle(n).overflowY) && n.scrollHeight > n.clientHeight) return n
+    }
+    return window
+  }
+  const r0 = rect()
+  if (r0.top < 0 || r0.left < 0 || r0.bottom > vh || r0.right > vw) el.scrollIntoView({ block: 'center', inline: 'nearest' })
+  if (own(at(0.5, 0.5))) return {}
+  const first = coverOf()
+  if (first.edge) {
+    // The content scrolls, the bar stays: move the target out from under it.
+    const r = rect()
+    const { box } = first
+    const dy = first.edge === 'top' ? -(box.bottom - r.top + 8) : first.edge === 'bottom' ? r.bottom - box.top + 8 : 0
+    const dx = first.edge === 'left' ? -(box.right - r.left + 8) : first.edge === 'right' ? r.right - box.left + 8 : 0
+    scroller().scrollBy(dx, dy)
+    if (own(at(0.5, 0.5))) return {}
+  }
+  for (const [fx, fy] of [[0.5, 0.15], [0.5, 0.85], [0.15, 0.5], [0.85, 0.5]]) {
+    if (own(at(fx, fy))) { const r = rect(); return { position: { x: r.width * fx, y: r.height * fy } } }
+  }
+  const { bar, edge } = coverOf()
+  const text = (bar?.innerText || '').replace(/\s+/g, ' ').trim()
+  return { cover: { edge, text: text.length > 40 ? `${text.slice(0, 40)}…` : text } }
+}
+
+/** The note for a target the browser can see but a tap could not reach. */
+function coveredNote(target, { edge, text }) {
+  const what = edge === 'top' ? 'a bar at the top of the screen' : edge === 'bottom' ? 'a bar at the bottom of the screen'
+    : edge ? `a panel on the ${edge}` : 'something in front of it'
+  return `"${target}" is on screen but covered by ${what}${text ? ` ("${text}")` : ''}; a tap would land on that instead`
+}
+
+/**
  * Performs one action. Returns { ok, note } — never throws for "not on
  * screen", because that is a result the reviewer needs to see.
  *
@@ -391,7 +462,10 @@ async function act(page, ctx, action) {
         const stalled = disabledSince && Date.now() - disabledSince >= NOTEWORTHY_MS
           ? `"${action.target}" was disabled for ${((Date.now() - disabledSince) / 1000).toFixed(1)}s before it could be clicked`
           : undefined
-        await hit.loc.click({ timeout: 5000 })
+        // A page that cannot answer (nothing to measure) is clicked as before.
+        const placed = await Promise.resolve().then(() => hit.loc.evaluate(uncover)).catch(() => ({}))
+        if (placed.cover) return { ok: false, note: coveredNote(action.target, placed.cover) }
+        await hit.loc.click({ timeout: 5000, position: placed.position })
         return { ok: true, note: [many(hit), stalled].filter(Boolean).join('; ') || undefined }
       }
       case 'fill': {
