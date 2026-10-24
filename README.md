@@ -199,6 +199,17 @@ without hiding real failures. If every action says the screen kept
 changing, something on the page never stops moving; lower `timeouts.ready` for
 that project.
 
+**A covered target is not clicked blindly.** On a phone a button can be
+"visible" yet sit under a sticky header or a bottom tab bar, and a tap there
+goes to the bar. Before a `click` the browser checks that the point it will
+press belongs to the target: if a bar fixed to an edge of the screen covers
+it, the page is scrolled so the target comes out from under the bar; if the
+page cannot scroll, the part of the target that still shows is tapped, as a
+person would. A target nothing can reach is a `blocked` step that says what
+covers it ("\"Delete\" is on screen but covered by a bar at the bottom of the
+screen (\"Home Search Profile\"); a tap would land on that instead"), since a
+user would hit the same thing.
+
 **Two modes, one format.** With `## Steps` the spec is scripted, which is
 repeatable and the right shape for regression. With only `## Goal`, a vision
 model explores like a new user. If it reaches the goal, its path is saved as

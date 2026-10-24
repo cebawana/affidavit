@@ -120,9 +120,9 @@ reviewer can be wrong.
 - `pass`: every step and criterion was visibly met.
 - `fail`: a real defect, or a wrong spec. Check the screenshot before deciding
   which. **Never weaken an expectation just to get a pass.**
-- `blocked`: the browser could not see something the spec named. Either the
-  label in the spec is wrong or the UI does not show it; the screenshot says
-  which.
+- `blocked`: the browser could not see something the spec named, or could
+  not reach it (the step note names what covers it). Either the label in the
+  spec is wrong or the UI does not show it; the screenshot says which.
 - `needs_human`: something was `unclear` (a toast that faded, content below the
   fold). Say which step and why.
 - `not_reviewed`: the screenshots exist but no reviewer judged them (rate limit,

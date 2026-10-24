@@ -84,6 +84,22 @@ const PAGES = {
   '/same-region': `<!doctype html><title>Same</title>
     <nav><a href="#" onclick="out('first')">More</a><a href="#" onclick="out('second')">More</a><a href="#" onclick="out('third')">More</a></nav><p id="out"></p>
     <script>function out(t) { document.getElementById('out').textContent = t }</script>`,
+  // A phone's tab bar covers the bottom 64px of the screen. The page is short, so nothing can scroll:
+  // the button that peeks out above the bar is tapped on the part that shows; the one under it cannot be.
+  '/bottom-bar': `<!doctype html><title>Bar</title><style>
+      body{margin:0} .bar{position:fixed;left:0;right:0;bottom:0;height:64px;background:#ddd}
+      button{position:absolute;left:20px;height:40px}</style>
+    <h1>Invoice</h1><p id="out"></p>
+    <button style="bottom:40px" onclick="out('peeking')">Save</button>
+    <button style="bottom:10px" onclick="out('covered')">Delete</button>
+    <div class="bar">Home Search Profile</div>
+    <script>function out(t) { document.getElementById('out').textContent = t }</script>`,
+  // A sticky header, and the page starts scrolled so that the button sits under it.
+  '/sticky-header': `<!doctype html><title>Sticky</title><style>
+      body{margin:0;height:2000px} header{position:sticky;top:0;height:64px;background:#ddd;z-index:1}
+      button{position:absolute;top:100px;height:40px}</style>
+    <header>Acme</header><button onclick="document.getElementById('out').textContent='Saved'">Save</button><p id="out" style="position:absolute;top:300px"></p>
+    <script>window.scrollTo(0, 60)</script>`,
   // A live clock: the page never stops changing, and is acted on anyway.
   '/ticking': `<!doctype html><title>Ticking</title><h1>Invoice</h1><span id="clock"></span>
     <button onclick="document.getElementById('out').textContent='Saved'">Save</button><p id="out"></p>
@@ -269,6 +285,29 @@ test('several matches in one region: the first, and the note says where they all
   const res = await clickOn(page, 'More')
   assert.equal(await shown(page), 'first')
   assert.equal(res.note, '3 matches on screen, all in the navigation; used the first')
+  await page.context().close()
+})
+
+test('a target under a bottom bar is tapped where it shows, or reported as covered with what covers it', { skip }, async () => {
+  const page = await open('/bottom-bar')
+  let res = await clickOn(page, 'Save')
+  assert.equal(res.ok, true, res.note)
+  assert.equal(await shown(page), 'peeking', 'the tap landed on the part above the bar')
+  assert.equal(res.note, undefined)
+  res = await clickOn(page, 'Delete')
+  assert.equal(res.ok, false)
+  assert.equal(res.note, '"Delete" is on screen but covered by a bar at the bottom of the screen ("Home Search Profile"); a tap would land on that instead')
+  assert.equal(await shown(page), 'peeking', 'nothing was clicked')
+  await page.context().close()
+})
+
+test('a target under a sticky header is scrolled out from under it first', { skip }, async () => {
+  const page = await open('/sticky-header')
+  assert.equal(await page.evaluate(() => document.querySelector('button').getBoundingClientRect().top), 40, 'starts under the 64px header')
+  const res = await click(page, ctx(5000))
+  assert.equal(res.ok, true, res.note)
+  assert.equal(await saved(page), true)
+  assert.ok(await page.evaluate(() => document.querySelector('button').getBoundingClientRect().top) >= 64, 'moved clear of the header')
   await page.context().close()
 })
 
