@@ -233,9 +233,15 @@ async function findCheckbox(page, label) {
   return null
 }
 
+/** The element that says exactly `text` (a trailing count allowed, as for clicks), else one that contains it. */
 async function findText(page, text) {
-  return (await firstVisible(page.getByText(text, { exact: true }))) ?? firstVisible(page.getByText(text))
+  return (await firstVisible(page.getByText(exactName(text)))) ?? firstVisible(page.getByText(text))
 }
+
+/** An element's words for a note, condensed; empty when the page cannot say. */
+const wording = loc => Promise.resolve().then(() => loc.innerText())
+  .then(t => { const w = t.replace(/\s+/g, ' ').trim(); return w.length > 60 ? `${w.slice(0, 60)}…` : w })
+  .catch(() => '')
 
 const QUIET_MS = 300 // nothing on screen changed for this long: the page is ready
 const NOTEWORTHY_MS = 1000 // a shorter wait is normal page loading, not worth a note
@@ -492,14 +498,41 @@ async function act(page, ctx, action) {
         await page.keyboard.press(action.key)
         return { ok: true }
       case 'waitFor': {
+        // The words a spec waits for are usually a confirmation ("Saved"), and
+        // a short one is also found inside other text on screen ("Unsaved
+        // changes", "Saved views"), where it would end the wait before the
+        // real confirmation appears. So something that says exactly those
+        // words is waited for; only when nothing ever does is text that
+        // contains them accepted, and the note names it, since it may not be
+        // what the spec meant. `exactly` never falls back.
         const limit = find + 4000
-        const hit = await poll(() => findText(page, action.target), limit)
-        return hit ? { ok: true } : miss(`"${action.target}" (waited ${limit / 1000}s)`)
+        const hit = await poll(() => firstVisible(page.getByText(exactName(action.target))), limit)
+        if (hit) return { ok: true }
+        if (action.exact) return miss(`exactly "${action.target}" (waited ${limit / 1000}s)`)
+        const within = await firstVisible(page.getByText(action.target))
+        if (!within) return miss(`"${action.target}" (waited ${limit / 1000}s)`)
+        const inside = await wording(within.loc)
+        return { ok: true, note: `matched inside ${inside ? `"${inside}"` : 'a longer text'}; nothing says exactly "${action.target}" (waited ${limit / 1000}s)` }
       }
       case 'waitGone': {
+        // When something says exactly the words, it alone decides: the
+        // "Saved" toast is gone once no element says "Saved", however long
+        // "Unsaved changes" stays in the sidebar. Only when nothing ever says
+        // exactly the words does text containing them have to go.
         const limit = action.timeout ?? goneTimeout
-        const gone = await poll(async () => (await page.getByText(action.target).filter({ visible: true }).count()) === 0, limit)
-        return gone ? { ok: true } : { ok: false, note: `"${action.target}" was still on screen after ${limit / 1000}s` }
+        const exact = page.getByText(exactName(action.target))
+        const partial = page.getByText(action.target)
+        let seenExact = false
+        let within = null
+        const gone = await poll(async () => {
+          if (await firstVisible(exact)) { seenExact = true; return false }
+          if (action.exact || seenExact) return true
+          within = await firstVisible(partial)
+          return !within
+        }, limit)
+        if (gone) return { ok: true }
+        const inside = within && !seenExact ? await wording(within.loc) : ''
+        return { ok: false, note: `"${action.target}" was still on screen after ${limit / 1000}s${inside ? ` (inside "${inside}")` : ''}` }
       }
       case 'scrollTo': {
         const hit = await poll(() => findText(page, action.target), find)

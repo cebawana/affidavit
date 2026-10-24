@@ -67,6 +67,10 @@ test('action vocabulary', () => {
   assert.equal(parseAction('select "Currency" option "EUR"').kind, 'select')
   assert.equal(parseAction('reload').kind, 'reload')
   assert.equal(parseAction('`wait for "Done"`').kind, 'waitFor')
+  assert.deepEqual(parseAction('wait for exactly "Saved"'), { kind: 'waitFor', target: 'Saved', exact: true, text: 'wait for exactly "Saved"' })
+  assert.deepEqual(parseAction('wait until gone exactly "Saving…"'), { kind: 'waitGone', target: 'Saving…', exact: true, text: 'wait until gone exactly "Saving…"' })
+  assert.equal(parseAction('wait for "Done"').exact, undefined)
+  assert.equal(parseAction('wait for exactly Done'), null)
   assert.equal(parseAction('hover "Menu"'), null)
 })
 
@@ -164,6 +168,8 @@ test('unknown actions suggest the closest valid one', () => {
   assert.equal(suggestAction('go to "/home"'), 'open "/home"')
   assert.equal(suggestAction('click "A" next to "B"'), 'click "A" near "B"')
   assert.equal(suggestAction('refresh'), 'reload')
+  assert.equal(suggestAction('look for "Saved"'), 'wait for "Saved"', 'the plain form is suggested, not the strict one')
+  assert.equal(suggestAction('wait until "Saving"'), 'wait until gone "Saving"')
   assert.equal(suggestAction('hover "Menu"'), null)
   let err
   try { parseSpec(SPEC.replace('click "Open"', 'scroll and look for "Open"'), 'demo') } catch (e) { err = e }

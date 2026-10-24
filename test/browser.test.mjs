@@ -100,6 +100,14 @@ const PAGES = {
       button{position:absolute;top:100px;height:40px}</style>
     <header>Acme</header><button onclick="document.getElementById('out').textContent='Saved'">Save</button><p id="out" style="position:absolute;top:300px"></p>
     <script>window.scrollTo(0, 60)</script>`,
+  // "Saved" is inside "Unsaved changes" from the start; the real "Saved" toast comes 1.5 s later.
+  '/saved-later': `<!doctype html><title>Saved later</title><aside><span>Unsaved changes</span></aside><main><p id="toast"></p></main>
+    <script>setTimeout(() => { document.getElementById('toast').textContent = 'Saved' }, 1500)</script>`,
+  // Only longer texts contain the words; nothing ever says exactly "Saved".
+  '/unsaved-only': `<!doctype html><title>Unsaved</title><aside><span>Unsaved changes</span><a href="#">Saved views</a></aside>`,
+  // The "Saved" toast is on screen at first and goes after 1 s; "Unsaved changes" stays.
+  '/toast-goes': `<!doctype html><title>Toast</title><aside><span>Unsaved changes</span></aside><main><p id="toast">Saved</p></main>
+    <script>setTimeout(() => { document.getElementById('toast').remove() }, 1000)</script>`,
   // A live clock: the page never stops changing, and is acted on anyway.
   '/ticking': `<!doctype html><title>Ticking</title><h1>Invoice</h1><span id="clock"></span>
     <button onclick="document.getElementById('out').textContent='Saved'">Save</button><p id="out"></p>
@@ -308,6 +316,45 @@ test('a target under a sticky header is scrolled out from under it first', { ski
   assert.equal(res.ok, true, res.note)
   assert.equal(await saved(page), true)
   assert.ok(await page.evaluate(() => document.querySelector('button').getBoundingClientRect().top) >= 64, 'moved clear of the header')
+  await page.context().close()
+})
+
+const waitFor = (page, target, exact, find = 0) => perform(page, ctx(5000, find), { kind: 'waitFor', target, exact, text: `wait for ${exact ? 'exactly ' : ''}"${target}"` })
+const waitGone = (page, target, exact, timeout) => perform(page, { ...ctx(5000), timeouts: { ...ctx(5000).timeouts, gone: timeout } }, { kind: 'waitGone', target, exact, text: `wait until gone ${exact ? 'exactly ' : ''}"${target}"` })
+
+test('`wait for` holds out for the exact words while a longer text contains them', { skip }, async () => {
+  const page = await open('/saved-later')
+  const started = Date.now()
+  const res = await waitFor(page, 'Saved', false, 3000)
+  assert.equal(res.ok, true)
+  assert.equal(res.note, undefined, 'the exact words appeared: nothing to add')
+  assert.ok(Date.now() - started >= 1400, `waited for the toast, not "Unsaved changes" (${Date.now() - started}ms)`)
+  await page.context().close()
+})
+
+test('`wait for` falls back to a longer text and says so; `exactly` never does', { skip }, async () => {
+  const page = await open('/unsaved-only')
+  const [loose, strict] = await Promise.all([waitFor(page, 'Saved', false), waitFor(page, 'Saved', true)])
+  assert.equal(loose.ok, true)
+  assert.equal(loose.note, 'matched inside "Unsaved changes"; nothing says exactly "Saved" (waited 4s)')
+  assert.equal(strict.ok, false)
+  assert.equal(strict.note, 'Could not see exactly "Saved" (waited 4s) on screen')
+  await page.context().close()
+})
+
+test('`wait until gone`: the exact words decide when something says them; otherwise the longer text is named', { skip }, async () => {
+  let page = await open('/toast-goes')
+  let res = await waitGone(page, 'Saved', false, 3000)
+  assert.equal(res.ok, true, res.note)
+  assert.ok(await textVisible(page, 'Unsaved changes', 0), 'the sidebar still contains the words, and that is fine')
+  await page.context().close()
+
+  page = await open('/unsaved-only')
+  res = await waitGone(page, 'Saved', false, 1000)
+  assert.equal(res.ok, false)
+  assert.equal(res.note, '"Saved" was still on screen after 1s (inside "Unsaved changes")')
+  res = await waitGone(page, 'Saved', true, 1000)
+  assert.equal(res.ok, true, 'nothing says exactly "Saved"')
   await page.context().close()
 })
 

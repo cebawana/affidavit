@@ -181,7 +181,9 @@ export const ACTION_VOCABULARY = [
   'uncheck "Checkbox label"',
   'press "Escape"',
   'wait for "Text"',
+  'wait for exactly "Text"',
   'wait until gone "Text"',
+  'wait until gone exactly "Text"',
   'scroll to "Text"',
   'reload',
 ]
@@ -196,7 +198,9 @@ const ACTIONS = [
   [/^uncheck\s+"([^"]+)"$/i, m => ({ kind: 'uncheck', target: m[1] })],
   [/^press\s+"([^"]+)"$/i, m => ({ kind: 'press', key: m[1] })],
   [/^wait for\s+"([^"]+)"$/i, m => ({ kind: 'waitFor', target: m[1] })],
+  [/^wait for exactly\s+"([^"]+)"$/i, m => ({ kind: 'waitFor', target: m[1], exact: true })],
   [/^wait until gone\s+"([^"]+)"$/i, m => ({ kind: 'waitGone', target: m[1] })],
+  [/^wait until gone exactly\s+"([^"]+)"$/i, m => ({ kind: 'waitGone', target: m[1], exact: true })],
   [/^scroll to\s+"([^"]+)"$/i, m => ({ kind: 'scrollTo', target: m[1] })],
   [/^reload$/i, () => ({ kind: 'reload' })],
 ]
