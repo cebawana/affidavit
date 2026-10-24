@@ -372,10 +372,11 @@ async function act(page, ctx, action) {
         // "not clickable yet" for as long as finding it would. A spec that
         // expects a disabled control says so with `expect:`, so nothing waits there.
         let disabled = null
+        let disabledSince = null
         const hit = await poll(async () => {
           const h = action.near ? await findNear(page, action.target, action.near) : await findInScopes(page, action.target)
           if (!h) return null
-          if (await h.loc.isDisabled().catch(() => false)) { disabled = h; return null }
+          if (await h.loc.isDisabled().catch(() => false)) { disabled = h; disabledSince ??= Date.now(); return null }
           disabled = null
           return h
         }, find)
@@ -384,8 +385,14 @@ async function act(page, ctx, action) {
             ? { ok: false, note: `"${action.target}" is visible but disabled (still disabled after ${find / 1000}s)` }
             : miss(`"${action.target}"${action.near ? ` near "${action.near}"` : ''}`)
         }
+        // A control that stayed disabled for a while after the page was ready
+        // is what a person feels as a slow page, and the step passes either
+        // way, so the wait is noted rather than silently absorbed.
+        const stalled = disabledSince && Date.now() - disabledSince >= NOTEWORTHY_MS
+          ? `"${action.target}" was disabled for ${((Date.now() - disabledSince) / 1000).toFixed(1)}s before it could be clicked`
+          : undefined
         await hit.loc.click({ timeout: 5000 })
-        return { ok: true, note: many(hit) }
+        return { ok: true, note: [many(hit), stalled].filter(Boolean).join('; ') || undefined }
       }
       case 'fill': {
         const hit = await poll(() => findField(page, action.target), find)

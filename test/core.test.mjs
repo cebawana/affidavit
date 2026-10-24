@@ -809,6 +809,13 @@ test('a disabled control gets the find timeout to become enabled before the clic
   const res = await perform(later.page, ctx, save)
   assert.equal(res.ok, true, res.note)
   assert.equal(later.clicks.length, 1, 'clicked once it was enabled')
+  assert.equal(res.note, undefined, 'enabled within a second: nothing to say')
+  // Disabled for five looks (a little over a second): the click lands, and the wait is noted.
+  const slow = button(5)
+  const noted = await perform(slow.page, { ...ctx, timeouts: { ...ctx.timeouts, find: 2000 } }, save)
+  assert.equal(noted.ok, true, noted.note)
+  assert.equal(slow.clicks.length, 1)
+  assert.match(noted.note, /^"Save" was disabled for 1\.\ds before it could be clicked$/, noted.note)
   const never = button(Infinity)
   const started = Date.now()
   const stuck = await perform(never.page, ctx, save)
