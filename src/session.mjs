@@ -1,8 +1,13 @@
-// The signed-in browser session, saved per role after a sign-in and reused by
-// the next spec of the same role. Signing in from scratch for every spec is
-// the slowest part of a suite; a saved session skips it. Whether it still
-// holds is decided in src/executor.mjs by looking, most reliable signal first,
-// and when nothing confirms it the browser signs in again.
+// The signed-in browser session, saved per role once, right after a sign-in,
+// and reused by every later spec of the same role. Signing in from scratch
+// for every spec is the slowest part of a suite; a saved session skips it.
+// The snapshot holds the sign-in and nothing else: it is taken before the
+// spec's start page opens and never updated by what a spec does, so each spec
+// starts from the same clean signed-in state and nothing one spec stores (a
+// mock flag, a cached list) reaches the next. Whether it still holds is
+// decided in src/executor.mjs by looking, most reliable signal first, and
+// when nothing confirms it the browser signs in again and saves a new
+// snapshot; an app that rotates its tokens is caught the same way.
 //
 // Sessions are live sign-in cookies, so they stay out of the runs folder
 // (which gets zipped, shared and uploaded): they live in .affidavit/sessions/
