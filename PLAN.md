@@ -24,7 +24,7 @@ The runner acts on what it sees, waits the right amount, and suites finish quick
 - 📊 #44 Suite wall time on a 94-spec project: where the minutes go (measured on nex-receptionist, 0.6.0). The breakdown behind every item below.
 - 🔀 #36 settle(): replace the 5 s network-idle cap + fixed 600 ms sleep with the quiet-screen check → PR #48
 - 🔀 #34 Skip the network wait on a page that never goes idle → PR #48
-- ⬜ #45 Sign in once per role, even when specs write to storage (snapshot the sign-in, fresh context per spec)
+- 🔀 #45 Sign in once per role, even when specs write to storage (snapshot the sign-in, fresh context per spec) → PR #49
 - ⬜ #46 Fail fast when the environment is wrong: preflight, environment guard, stop on a repeated block
 - ⬜ #47 Rerun what failed, and from the failed step: `run --failed`, `run <spec> --from <n>`
 - ⬜ #37 Re-measure the same suite after #34, #36, #45 and state the gain in the release notes

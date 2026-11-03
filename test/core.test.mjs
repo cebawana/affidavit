@@ -292,7 +292,7 @@ import { RESULT_FORMAT, collectRuns, loadRun, resolveRunArg, reviewRun, reviewRu
 import { SESSIONS_DIR, STATE_DIR, ensureStateDir, saveSession, sessionFor, sessionPath } from '../src/session.mjs'
 import { execFileSync } from 'node:child_process'
 import { exactName, loginFormVisible, onLoginPath, perform, ready, readyNote } from '../src/browser.mjs'
-import { signInStep } from '../src/executor.mjs'
+import { runScripted, signInStep } from '../src/executor.mjs'
 import { sessionsCheck } from '../src/init.mjs'
 import { chmodSync, statSync } from 'node:fs'
 
@@ -726,6 +726,30 @@ test('when nothing confirms a saved session the browser signs in again', async (
   assert.equal(first.title, 'Sign in as admin and open /invoices')
   assert.equal(session.saved, true)
   assert.ok(!existsSync(join(dir, '.affidavit')) && !existsSync(join(dir, 'elsewhere', '.affidavit')), 'the self-gitignore is only written for <root>/.affidavit/sessions')
+})
+
+test('the saved session is the sign-in and nothing else: taken before the start page opens, never updated by a run', async () => {
+  const dir = tmp()
+  // The pretend browser's storage names the page it was saved on, so the file says when the snapshot was taken.
+  const app = fakeApp({ token: 'one' })
+  const page = { ...app.page, context: () => ({ storageState: async () => ({ cookies: [{ name: 'session', value: app.st.session }], origins: [{ origin: app.st.url }] }) }) }
+  const session = { path: join(dir, 's', 'admin.json'), saved: false }
+  const savedOn = () => JSON.parse(readFileSync(session.path, 'utf8')).origins[0].origin
+  const spec = { role: 'admin', start: '/invoices', steps: [{ title: 'Look at the invoices', actions: [{ kind: 'waitFor', target: 'INV-0042', exact: false, text: 'wait for "INV-0042"' }], expect: ['The invoice list is shown.'] }] }
+
+  const records = await runScripted({ page, ctx: fastCtx(), dir, spec, creds: CREDS, session, log: () => {} })
+  assert.equal(records[0].title, 'Sign in as admin and open /invoices')
+  assert.match(notes(records[0]), /click "Sign in" ; wait until gone "Welcome back" ; open "\/invoices"$/, 'the start page still opens as part of step 0')
+  assert.equal(records[1].status, 'done', records[1].error)
+  assert.equal(session.saved, true)
+  assert.equal(savedOn(), 'http://localhost:3000/', 'saved where the sign-in landed, before the start page opened')
+  assert.equal(page.url(), 'http://localhost:3000/invoices', 'the run went on to the start page and the steps')
+
+  // A second spec of the role reuses the session and runs its steps; the file is left exactly as saved.
+  app.st.url = 'http://localhost:3000/blank'
+  const again = await runScripted({ page, ctx: fastCtx(), dir, spec, creds: CREDS, session, log: () => {} })
+  assert.equal(again[0].title, 'Signed in as admin (saved session), open /invoices')
+  assert.equal(savedOn(), 'http://localhost:3000/', 'what a spec did on its pages is not written back into the session')
 })
 
 test('doctor reports saved sessions that are world-readable or not gitignored', async () => {

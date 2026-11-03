@@ -119,14 +119,18 @@ trusted only on positive evidence, because a missing login form proves nothing
 on a public page: with `auth.signedInText` set (text only a signed-in user
 sees, such as "Sign out"), it must be on screen; otherwise the browser opens
 `auth.loginPath` and must be sent away from it. A sign-in form there means the
-session expired, so it signs in right there and refreshes the saved copy. When
+session expired, so it signs in right there and saves a new copy. When
 nothing confirms it, the browser signs in again from a fresh context with
 nothing stored, whatever the app keeps its session in (if your app shows the
 signed-in page at the login URL instead of redirecting, set `signedInText` so
-every spec after the first can skip the sign-in). Step 0 stays in the report
-either way, with notes saying which path it took. `--fresh-sign-in` ignores
-saved sessions for one run; `"reuseSession": false` turns the feature off;
-deleting `.affidavit/sessions/` forgets every session.
+every spec after the first can skip the sign-in). The saved copy is the
+sign-in and nothing else: it is taken before the spec's start page opens and
+never updated by what a spec does, so every spec starts from the same clean
+signed-in state and nothing one spec stores (a mock-mode flag, a cached list)
+reaches the next. Step 0 stays in the report either way, with notes saying
+which path it took. `--fresh-sign-in` ignores saved sessions for one run;
+`"reuseSession": false` turns the feature off; deleting
+`.affidavit/sessions/` forgets every session.
 
 ## Writing a spec
 
@@ -289,10 +293,10 @@ looked up and any `role` is only a label shown in the report.
   `concurrency` is how many reviews run at once while the browser captures the
   next spec; unset means the backend's own default. A backend is one file in
   `src/backends/`.
-- **reuseSession**: save the signed-in session per role and reuse it on the
-  next spec of that role (default on). The session counts only when
-  `signedInText` is on screen or the login page sends the browser away;
-  otherwise it signs in again.
+- **reuseSession**: save the signed-in session per role, as it was right
+  after sign-in, and start every later spec of that role from it (default on).
+  The session counts only when `signedInText` is on screen or the login page
+  sends the browser away; otherwise it signs in again.
 - **leakTerms**: words a spec may not contain in this project; `/regex/` works.
 - **allowRemote**: Affidavit signs in and writes data, so it refuses non-local
   hosts unless this is set.

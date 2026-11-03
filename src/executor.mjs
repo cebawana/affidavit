@@ -105,8 +105,14 @@ export async function signInStep(page, ctx, dir, spec, creds, session) {
     // again: a fresh context, or the app may show the signed-in page where
     // the form should be.
     if (session?.saved && !onLoginPage && ctx.fresh) page = await ctx.fresh(page)
-    error = await performAll(page, ctx, signInSteps(auth, creds, spec.start, ctx.timeouts.signIn, { onLoginPage }), actions)
+    error = await performAll(page, ctx, signInSteps(auth, creds, null, ctx.timeouts.signIn, { onLoginPage }), actions)
+    // The snapshot is the sign-in and nothing else: taken before the start
+    // page opens (a page may write to storage the moment it loads: a mock
+    // flag, a cache) and never updated afterwards, so nothing a spec stores
+    // reaches the next spec of this role. A session the app stops honouring
+    // is noticed by the check above and signed in again.
     if (!error && session) await saveSession(page, session)
+    if (!error && spec.start) error = await performAll(page, ctx, [openAction(spec.start)], actions)
   } else if (!error && reused && spec.start && !opened) {
     error = await performAll(page, ctx, [openAction(spec.start)], actions)
   }
@@ -120,14 +126,6 @@ export async function signInStep(page, ctx, dir, spec, creds, session) {
     status: error ? 'blocked' : 'done', error: error ?? undefined, screenshot: shot.file, png: shot.png, url: page.url(),
   }
   return { page, record }
-}
-
-/**
- * Apps that rotate their tokens during use would leave the copy saved at
- * sign-in stale early; the state at the end of a signed-in run is freshest.
- */
-async function refreshSession(page, session, records) {
-  if (session && records[0]?.status === 'done') await saveSession(page, session)
 }
 
 /** @param {{ page, ctx, dir, spec, creds, session, log }} args */
@@ -150,7 +148,6 @@ export async function runScripted({ page, ctx, dir, spec, creds, session, log })
     log(`  ${n}. ${step.title} — ${rec.status}${rec.error ? `: ${rec.error}` : ''}`)
     blocked = rec.status === 'blocked'
   }
-  await refreshSession(page, session, records)
   return records
 }
 
@@ -247,6 +244,5 @@ export async function runExplore({ page, ctx, dir, spec, creds, session, log, ba
     history.push(`${turn}. ${action.text} — ${rec.status === 'done' ? 'ok' : `FAILED: ${rec.error}`}${tries > 1 ? ` (you have now done this ${tries} times — if it did not help, look somewhere else)` : ''}`)
     log(`  ${rec.n}. ${rec.title} → ${action.text} — ${rec.status}${rec.error ? `: ${rec.error}` : ''}`)
   }
-  await refreshSession(page, session, records)
   return { records, outcome, usage }
 }

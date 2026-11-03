@@ -39,9 +39,10 @@ export const DEFAULTS = {
   // `concurrency`: how many reviews run at once while the browser captures the
   // next spec; unset means the backend's own default (see src/backends/).
   backend: { name: 'claude-cli', model: null, reviewModel: null, exploreModel: null, concurrency: null },
-  // Save the signed-in session per role and reuse it on the next spec of that
-  // role; the browser looks for the sign-in screen and signs in again if it
-  // shows. `run --fresh-sign-in` ignores saved sessions for one run.
+  // Save the signed-in session per role (the state right after sign-in, never
+  // what a spec stored later) and start every spec of that role from it; the
+  // browser looks for the sign-in screen and signs in again if it shows.
+  // `run --fresh-sign-in` ignores saved sessions for one run.
   reuseSession: true,
   leakTerms: [],
   hide: [],
