@@ -3,9 +3,9 @@
 Snapshot of GitHub issues per milestone. Latest release: **0.6.0** (24 Oct 2026).
 Source of truth is GitHub; this file is a readable view of it.
 
-Legend: ✅ done · 🔀 PR open · ⬜ open
+Legend: ✅ done · 🔀 PR open · ⬜ open · 📊 measurement
 
-## 1. Reliable & fast — 8 done / 9 open
+## 1. Reliable & fast — 8 done / 14 open
 
 The runner acts on what it sees, waits the right amount, and suites finish quickly.
 
@@ -20,15 +20,20 @@ The runner acts on what it sees, waits the right amount, and suites finish quick
 
 - ✅ #39 `wait for` prefers an exact match over a substring (0.6.0)
 
-**Speed**
+**Speed — next release 0.7.0 "faster suites"**
+- 📊 #44 Suite wall time on a 94-spec project: where the minutes go (measured on nex-receptionist, 0.6.0). The breakdown behind every item below.
+- ⬜ #36 settle(): replace the 5 s network-idle cap + fixed 600 ms sleep with the quiet-screen check
 - ⬜ #34 Skip the network wait on a page that never goes idle
-- ⬜ #36 settle(): replace the fixed 600 ms sleep with the quiet-screen check
-- ⬜ #37 Measure suite time on a real project: 0.2.0 vs current
-- ⬜ #18 Parallel runs with `--workers`
+- ⬜ #45 Sign in once per role, even when specs write to storage (snapshot the sign-in, fresh context per spec)
+- ⬜ #46 Fail fast when the environment is wrong: preflight, environment guard, stop on a repeated block
+- ⬜ #47 Rerun what failed, and from the failed step: `run --failed`, `run <spec> --from <n>`
+- ⬜ #37 Re-measure the same suite after #34, #36, #45 and state the gain in the release notes
+- ⬜ #18 Parallel runs with `--workers` (decide after #37's numbers)
 
 **Spec & runner**
+- ⬜ #43 `upload "file" to "Button text"`: a fixture file on the input a visible button opens (blocks real QA, also 0.7.0)
 - ⬜ #4 `## Cleanup` steps that always run
-- ⬜ #14 New actions: hover, type, drag, upload, horizontal scroll
+- ⬜ #14 New actions: hover, type, drag, horizontal scroll (upload split into #43)
 - ⬜ #15 Full-page capture and sideways-overflow notes
 
 **Auth**
@@ -75,6 +80,10 @@ Good enough to show strangers: proof, CI, sharing, polish.
 
 ## Next up
 
-1. Publish 0.6.0 to npm (`npm publish` after `npm login`).
-2. Speed cluster: #37 first (baseline numbers), then #34 and #36, then #18.
-3. Spec gaps that block real suites: #4 Cleanup, #14 new actions.
+0.7.0 "faster suites", in this order:
+
+1. #36 then #34: settle and the ready wait stop paying 5 s on pages that never go network-idle. Biggest mechanical win.
+2. #45: sign in once per role again, with mock state no longer leaking between specs.
+3. #43: `upload`, so nex-receptionist drops its `documentAutoPick` knob.
+4. #46 and #47: stop paying for a broken environment, rerun only what failed.
+5. #37: re-measure on the 94-spec suite and put the numbers in the release notes.
