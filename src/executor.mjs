@@ -30,7 +30,7 @@ async function performAll(page, ctx, steps, actions) {
 async function runOne(page, ctx, dir, n, step) {
   const actions = []
   const error = await performAll(page, ctx, step.actions, actions)
-  await settle(page)
+  await settle(page, ctx.timeouts.ready ?? 5000)
   const shot = await shoot(page, dir, n)
   return { n, title: step.title, actions, expect: step.expect, status: error ? 'blocked' : 'done', error: error ?? undefined, screenshot: shot.file, png: shot.png, url: page.url() }
 }
@@ -74,7 +74,7 @@ export async function signInStep(page, ctx, dir, spec, creds, session) {
     if (auth.signedInText) {
       error = await performAll(page, ctx, [openAction(spec.start || '/')], actions)
       if (!error) {
-        await settle(page)
+        await settle(page, ctx.timeouts.ready ?? 5000)
         opened = true
         if (await textVisible(page, auth.signedInText, wait)) {
           reused = true
@@ -86,7 +86,7 @@ export async function signInStep(page, ctx, dir, spec, creds, session) {
     } else if (auth.type === 'form' && auth.loginPath) {
       error = await performAll(page, ctx, [openAction(auth.loginPath)], actions)
       if (!error) {
-        await settle(page)
+        await settle(page, ctx.timeouts.ready ?? 5000)
         if (await loginFormVisible(page, auth, wait)) {
           onLoginPage = true
           actions.at(-1).note = `the sign-in screen appeared: the saved ${spec.role} session had expired, so the browser signs in again`
@@ -110,7 +110,7 @@ export async function signInStep(page, ctx, dir, spec, creds, session) {
   } else if (!error && reused && spec.start && !opened) {
     error = await performAll(page, ctx, [openAction(spec.start)], actions)
   }
-  await settle(page)
+  await settle(page, ctx.timeouts.ready ?? 5000)
   const shot = await shoot(page, dir, 0)
   const start = spec.start ? (reused ? `, open ${spec.start}` : ` and open ${spec.start}`) : ''
   const record = {
@@ -190,7 +190,7 @@ export async function runExplore({ page, ctx, dir, spec, creds, session, log, ba
     if (first.status !== 'done') return { records, outcome: { stuck: true, reason: first.error }, usage }
     current = first.png
   } else {
-    await settle(page)
+    await settle(page, ctx.timeouts.ready ?? 5000)
     current = await page.screenshot({ type: 'png' })
   }
 

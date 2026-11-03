@@ -279,41 +279,73 @@ function quietWindow({ quiet, limit }) {
 }
 
 /**
- * Waits until the page is ready to be acted on, the way a person waits for a
- * page to stop loading before clicking: the load has finished, the network has
- * gone quiet, and nothing on screen has changed or moved for a moment. On a
- * server-rendered app a click can otherwise land before the page's script has
- * taken over, and the click is lost — a timing problem that would read as a
- * product bug. Generic by design (no framework hooks, nothing from inside the
- * app), and best effort: a page that never stops changing (a live clock, a
- * polling feed) is acted on anyway once `budget` ms are spent. The target
- * itself is checked again at click time: Playwright acts only on an element
- * whose box has stopped moving.
- *
- * @returns {{ waitedMs: number, quiet: boolean, networkBusy: boolean }}
+ * What the browser has learned about the document on a page: that its network
+ * never goes idle (polling, a live socket, analytics beacons), so waiting for
+ * it is futile and every wait would pay the full cap for nothing. Kept per
+ * page and forgotten when a new document loads (a navigation, a reload), not
+ * on a route change inside the same document, where the same scripts keep
+ * polling. The page itself is never written to.
  */
-export async function ready(page, budget) {
+const learned = new WeakMap()
+function learnedAbout(page) {
+  let about = learned.get(page)
+  if (!about) {
+    about = { networkBusy: false }
+    learned.set(page, about)
+    page.on?.('domcontentloaded', () => { about.networkBusy = false })
+  }
+  return about
+}
+
+/**
+ * Waits for the page to come to rest: the load has finished, the network has
+ * gone quiet (given `network` ms, unless this document is known never to go
+ * idle), and nothing on screen has changed or moved for a moment. Generic by
+ * design (no framework hooks, nothing from inside the app), and best effort: a
+ * page that never stops changing (a live clock, a ticking feed) is given up on
+ * once `budget` ms are spent. Each watch is short, so a navigation while we
+ * watch (which destroys the page's context) starts over with the new page.
+ *
+ * @returns {{ waitedMs: number, quiet: boolean, networkBusy: boolean, networkSkipped: boolean }}
+ */
+async function atRest(page, budget, network) {
   const started = Date.now()
   const left = () => budget - (Date.now() - started)
+  const about = learnedAbout(page)
+  const networkSkipped = about.networkBusy
   let quiet = false
-  let networkBusy = false
+  let networkBusy = about.networkBusy
   try {
     while (left() > 0 && !quiet) {
       await page.waitForLoadState('load', { timeout: left() }).catch(() => {})
       if (left() <= 0) break
-      // A page that polls (notifications, a dashboard that refreshes) never
-      // goes idle, and a person does not wait for it: the network gets a
-      // moment, so a bundle still on its way can arrive, then the screen decides.
-      networkBusy = !(await page.waitForLoadState('networkidle', { timeout: Math.min(left(), NETWORK_MS) }).then(() => true, () => false))
-      if (left() <= 0) break
-      // A navigation while we watch destroys the page's context: start over
-      // with the new page. The deadline keeps one watch short, so a page that
-      // is never quiet still re-checks the network on the way to giving up.
+      if (!about.networkBusy) {
+        networkBusy = !(await page.waitForLoadState('networkidle', { timeout: Math.min(left(), network) }).then(() => true, () => false))
+        if (networkBusy) about.networkBusy = true
+      }
+      // At least one quiet window, even when the network took the budget:
+      // the screen is what is acted on or looked at.
       const limit = Math.max(Math.min(left(), 2000), QUIET_MS)
       quiet = await page.evaluate(quietWindow, { quiet: QUIET_MS, limit }).catch(() => sleep(100).then(() => false))
     }
   } catch { /* readiness is a courtesy to the action, never a reason to skip it */ }
-  return { waitedMs: Date.now() - started, quiet, networkBusy }
+  return { waitedMs: Date.now() - started, quiet, networkBusy, networkSkipped }
+}
+
+/**
+ * Waits until the page is ready to be acted on, the way a person waits for a
+ * page to stop loading before clicking. On a server-rendered app a click can
+ * otherwise land before the page's script has taken over, and the click is
+ * lost — a timing problem that would read as a product bug. A page that polls
+ * (notifications, a dashboard that refreshes) never goes idle, and a person
+ * does not wait for it: the network gets a moment, so a bundle still on its
+ * way can arrive, then the screen decides; once a document has shown that
+ * its network never goes idle, later actions on it skip even that moment.
+ * The target itself is checked again at click time: Playwright acts only on
+ * an element whose box has stopped moving.
+ */
+export async function ready(page, budget) {
+  return atRest(page, budget, NETWORK_MS)
 }
 
 /** The note an action carries when the wait before it was long enough to matter. */
@@ -327,10 +359,15 @@ export function readyNote({ waitedMs, quiet, networkBusy }) {
 /** Actions that touch the page, so they wait for it to be ready first. */
 const INTERACTS = new Set(['click', 'fill', 'select', 'check', 'uncheck', 'press', 'scrollTo'])
 
-/** Lets the page finish what the last action started before we look at it. */
-export async function settle(page) {
-  await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {})
-  await sleep(600)
+/**
+ * Lets the page finish what the last action started before it is looked at
+ * (a screenshot the reviewer will judge), so the finished screen is captured,
+ * not one mid-redraw. Here the network gets the whole budget, since the
+ * response to the action is what should be on screen; a document known never
+ * to go idle skips that wait, and the screen decides, as before an action.
+ */
+export async function settle(page, budget = 5000) {
+  return atRest(page, budget, budget)
 }
 
 const UNLABELLED = 'field found by the text beside it (it has no attached label)'
