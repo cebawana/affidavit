@@ -6,7 +6,7 @@ import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { chromium } from 'playwright-core'
-import { perform, ready, textVisible } from '../src/browser.mjs'
+import { perform, ready, settle, textVisible } from '../src/browser.mjs'
 
 /**
  * A pretend app with the timing problems #1 is about. Its script is served
@@ -31,6 +31,10 @@ const PAGES = {
   // while the screen stays still: the network never goes idle.
   '/polling': `<!doctype html><title>Polling</title><h1>Invoice</h1><button onclick="document.getElementById('out').textContent='Saved'">Save</button><p id="out"></p>
     <script>setInterval(() => fetch('/ping'), 300)</script>`,
+  // After a click the page redraws every 100 ms for a second ("Saving 1" … "Saving 10"), then shows "Saved".
+  '/redraw': `<!doctype html><title>Redraw</title><h1>Invoice</h1><button onclick="go()">Save</button><p id="out"></p>
+    <script>function go() { const o = document.getElementById('out'); let n = 0
+      const t = setInterval(() => { n++; o.textContent = 'Saving ' + n; if (n >= 10) { clearInterval(t); o.textContent = 'Saved' } }, 100) }</script>`,
   // The button is disabled until the script has taken over, 2 s in.
   '/enabled-later': `<!doctype html><title>Later</title><h1>Invoice</h1><button disabled onclick="document.getElementById('out').textContent='Saved'">Save</button><p id="out"></p>
     <script>setTimeout(() => { document.querySelector('button').disabled = false }, 2000)</script>`,
@@ -196,6 +200,56 @@ test('a page that keeps the network busy gets a moment, then the screen decides'
   assert.ok(Date.now() - started < 2500, `the network wait is capped, not the whole budget (${Date.now() - started}ms)`)
   assert.match(res.note, /^waited 1\.\ds for the page to be ready; the network stayed busy but the screen was still$/, res.note)
   assert.equal(await saved(page), true)
+  await page.context().close()
+})
+
+test('a document whose network never goes idle pays the network wait once; a new document pays it again', { skip }, async () => {
+  const page = await open('/polling')
+  const first = await click(page, ctx(5000))
+  assert.match(first.note, /^waited 1\.\ds for the page to be ready; the network stayed busy but the screen was still$/, first.note)
+  const laps = []
+  for (let i = 0; i < 9; i++) {
+    const started = Date.now()
+    const res = await click(page, ctx(5000))
+    laps.push(Date.now() - started)
+    assert.equal(res.ok, true)
+    assert.equal(res.note, undefined, `later clicks on the same document have nothing to report (${res.note})`)
+  }
+  assert.ok(Math.max(...laps) < 900, `the network wait (1 s) is skipped on a document known to stay busy (${laps.join(', ')}ms)`)
+  // A navigation is a new document, which has to show its network is busy again.
+  await perform(page, ctx(5000), { kind: 'open', path: '/polling', text: 'open "/polling"' })
+  const again = await click(page, ctx(5000))
+  assert.match(again.note, /^waited 1\.\ds for the page to be ready; the network stayed busy but the screen was still$/, again.note)
+  await page.context().close()
+})
+
+test('settle: a calm page is looked at as soon as it is still; a redrawing page once it has finished', { skip }, async () => {
+  let page = await open('/ready')
+  let started = Date.now()
+  await settle(page, 5000)
+  // Right after a navigation, "network idle" means 500 ms without a request, then one quiet window: under a second,
+  // where the fixed 600 ms pause on top of the idle wait took more.
+  assert.ok(Date.now() - started < 1000, `one quiet window after the network goes idle, no fixed pause (${Date.now() - started}ms)`)
+  started = Date.now()
+  await settle(page, 5000)
+  assert.ok(Date.now() - started < 500, `a page already idle costs one quiet window (${Date.now() - started}ms)`)
+  await page.context().close()
+
+  page = await open('/redraw')
+  await click(page, ctx(5000))
+  started = Date.now()
+  await settle(page, 5000)
+  const took = Date.now() - started
+  assert.ok(took >= 900, `the screenshot waits for the redraw to end (${took}ms)`)
+  assert.equal(await textVisible(page, 'Saved', 100), true, 'the finished screen, not one mid-redraw')
+  await page.context().close()
+
+  // A document known to keep the network busy: settle does not wait for it either.
+  page = await open('/polling')
+  await click(page, ctx(5000))
+  started = Date.now()
+  await settle(page, 5000)
+  assert.ok(Date.now() - started < 700, `no network wait on a document known to stay busy (${Date.now() - started}ms)`)
   await page.context().close()
 })
 

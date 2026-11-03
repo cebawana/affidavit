@@ -201,7 +201,13 @@ otherwise land before the page's script has taken over and simply be lost,
 which reads as a product bug when it is a timing one. The wait is generic (no
 framework hooks) and never blocks a step: a page that never settles (a live
 clock) is acted on when the budget is spent, and a page that polls the network
-costs about a second, not the budget. A `click` on a control that is disabled
+costs about a second once: a document whose network never went idle is
+remembered, and later actions on it skip the network wait and go straight to
+the screen check, until a navigation or reload loads a new document. The same
+check decides when the screenshot after each step is taken: the page is
+captured as soon as it has been still for a moment, so a calm page is not
+made to wait and a page still redrawing after an action is captured once it
+has finished, within the same `timeouts.ready`. A `click` on a control that is disabled
 gives it `timeouts.find` to become enabled before reporting it, because many
 apps disable their buttons until their script is ready. A wait of a second or
 more is noted on the action in the report ("waited 2.3s for the page to be
