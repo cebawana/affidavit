@@ -1,11 +1,11 @@
 # Affidavit — Plan
 
-Snapshot of GitHub issues per milestone. Latest release: **0.6.0** (24 Oct 2026).
+Snapshot of GitHub issues per milestone. Latest release: **0.7.0** (3 Nov 2026).
 Source of truth is GitHub; this file is a readable view of it.
 
 Legend: ✅ done · 🔀 PR open · ⬜ open · 📊 measurement
 
-## 1. Reliable & fast — 8 done / 14 open
+## 1. Reliable & fast — 11 done / 11 open
 
 The runner acts on what it sees, waits the right amount, and suites finish quickly.
 
@@ -19,15 +19,15 @@ The runner acts on what it sees, waits the right amount, and suites finish quick
 - ✅ #35 Note when a control was disabled before it could be clicked (0.6.0)
 
 - ✅ #39 `wait for` prefers an exact match over a substring (0.6.0)
+- ✅ #36 settle(): the quiet-screen check instead of a fixed pause (0.7.0)
+- ✅ #34 Skip the network wait on a page that never goes idle (0.7.0)
+- ✅ #45 Sign in once per role: the saved session is the sign-in and nothing else (0.7.0)
 
-**Speed — next release 0.7.0 "faster suites"**
+**Speed — towards 0.8.0**
 - 📊 #44 Suite wall time on a 94-spec project: where the minutes go (measured on nex-receptionist, 0.6.0). The breakdown behind every item below.
-- 🔀 #36 settle(): replace the 5 s network-idle cap + fixed 600 ms sleep with the quiet-screen check → PR #48
-- 🔀 #34 Skip the network wait on a page that never goes idle → PR #48
-- 🔀 #45 Sign in once per role, even when specs write to storage (snapshot the sign-in, fresh context per spec) → PR #49
 - ⬜ #46 Fail fast when the environment is wrong: preflight, environment guard, stop on a repeated block
 - ⬜ #47 Rerun what failed, and from the failed step: `run --failed`, `run <spec> --from <n>`
-- ⬜ #37 Re-measure the same suite after #34, #36, #45 and state the gain in the release notes
+- ⬜ #37 Re-measure the 94-spec suite on 0.7.0 and post the numbers (needs the real project)
 - ⬜ #18 Parallel runs with `--workers` (decide after #37's numbers)
 
 **Spec & runner**
@@ -80,10 +80,8 @@ Good enough to show strangers: proof, CI, sharing, polish.
 
 ## Next up
 
-0.7.0 "faster suites", in this order:
-
-1. #36 then #34: settle and the ready wait stop paying 5 s on pages that never go network-idle. Biggest mechanical win.
-2. #45: sign in once per role again, with mock state no longer leaking between specs.
-3. #43: `upload`, so nex-receptionist drops its `documentAutoPick` knob.
+1. Publish 0.7.0 to npm (`npm publish` after `npm login`).
+2. On nex-receptionist: set `reuseSession` back to `true`, run the suite on 0.7.0, post the numbers in #37.
+3. #43 `upload`, so nex-receptionist drops its `documentAutoPick` knob.
 4. #46 and #47: stop paying for a broken environment, rerun only what failed.
-5. #37: re-measure on the 94-spec suite and put the numbers in the release notes.
+5. #18 `--workers` once #37's numbers say where the ceiling is.
