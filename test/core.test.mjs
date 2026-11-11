@@ -862,3 +862,50 @@ test('exact wording allows a trailing count, nothing else', () => {
   assert.ok(exactName('Save (draft)').test('Save (draft)'), 'the wording itself is taken literally')
   assert.ok(!exactName('Save (draft)').test('Save draft'))
 })
+
+test('open: a spec id finds its latest report, a run folder its own, nothing else is an error', async () => {
+  const { pageFor } = await import('../src/open.mjs')
+  const root = tmp()
+  writeFileSync(join(root, 'affidavit.config.json'), '{}')
+  const config = loadConfig(root)
+  const run = (name, id, startedAt) => {
+    mkdirSync(join(config.runsDir, name), { recursive: true })
+    writeFileSync(join(config.runsDir, name, 'result.json'), JSON.stringify({ id, startedAt, result: 'pass' }))
+  }
+  run('demo-old', 'demo', '2026-11-01T10:00:00Z')
+  run('demo-new', 'demo', '2026-11-02T10:00:00Z')
+  run('other-1', 'other', '2026-11-03T10:00:00Z')
+  assert.equal(pageFor(config), join(config.runsDir, 'ledger.html'))
+  assert.equal(pageFor(config, 'demo'), join(config.runsDir, 'demo-new', 'report.html'))
+  assert.equal(pageFor(config, 'demo-old'), join(config.runsDir, 'demo-old', 'report.html'))
+  assert.throws(() => pageFor(config, 'missing'), /No runs of "missing"/)
+})
+
+test('after a run: links to the ledger and to every report that did not pass', async () => {
+  const { resultLinks } = await import('../src/open.mjs')
+  const out = resultLinks('/p/QA/Runs/ledger.html', [
+    { id: 'login', result: 'pass', report: '/p/QA/Runs/login-1/report.html' },
+    { id: 'checkout', result: 'fail', report: '/p/QA/Runs/check out-1/report.html' },
+    { file: 'broken.qa.md', result: 'error' },
+  ])
+  assert.match(out, /Results  file:\/\/\/p\/QA\/Runs\/ledger\.html/)
+  assert.match(out, /fail +checkout  file:\/\/\/p\/QA\/Runs\/check%20out-1\/report\.html/)
+  assert.doesNotMatch(out, /login/)
+  assert.equal(resultLinks(null, []), '')
+})
+
+test('the ledger refresh writes a linked page, and a failure warns instead of throwing', async () => {
+  const { refreshLedger } = await import('../src/open.mjs')
+  const root = tmp()
+  writeFileSync(join(root, 'affidavit.config.json'), '{}')
+  const config = loadConfig(root)
+  mkdirSync(config.runsDir, { recursive: true })
+  const page = await refreshLedger(config, 'Demo QA ledger')
+  assert.equal(page, join(config.runsDir, 'ledger.html'))
+  assert.match(readFileSync(page, 'utf8'), /Demo QA ledger/)
+  const warnings = []
+  rmSync(config.runsDir, { recursive: true })
+  writeFileSync(config.runsDir, 'not a folder')
+  assert.equal(await refreshLedger(config, 'x', w => warnings.push(w)), null)
+  assert.match(warnings[0], /^! The ledger was not refreshed/)
+})

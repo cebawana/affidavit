@@ -9,6 +9,7 @@ import { CONFIG_FILE, findRoot, loadConfig } from '../src/config.mjs'
 import { assertLocalBase, loadEnv } from '../src/env.mjs'
 import { doctor, init } from '../src/init.mjs'
 import { writeLedger } from '../src/ledger.mjs'
+import { openInBrowser, pageFor, refreshLedger, resultLinks } from '../src/open.mjs'
 import { allSpecs, loadSpec, resolveSpecArg, reviewRuns, runMany, selectRuns } from '../src/run.mjs'
 import { ACTION_VOCABULARY } from '../src/spec.mjs'
 
@@ -24,6 +25,7 @@ Usage
   affidavit review <run…> | --latest | --unreviewed
                                              review runs that exist, without the browser
   affidavit ledger [options]                 one page: every spec, latest result, history
+  affidavit open [spec-id | run]             open the ledger, or a spec's latest report, in the browser
 
 Init options
   --no-auth         the app has no sign-in (otherwise init asks, or sets up a login form)
@@ -40,18 +42,25 @@ Run options
                     reviews running at once while the browser captures the next spec
                     (default: backend.concurrency in the config, or the backend's own)
   --fresh-sign-in   ignore saved sessions and sign in from scratch for this run
+  --open            open the ledger in the browser when done
+
+After run and review, <runs>/ledger.html is refreshed (screenshots linked) and
+a link to it, and to each report that did not pass, is printed.
 
 Review options
   <run…>            run folders (a path, or a name inside the runs folder)
   --latest          every spec's latest run
   --unreviewed      runs without a verdict: captured with --no-review, or left by a failed review
   --review-concurrency <n>
+  --open            open the ledger in the browser when done
 
 Ledger options
-  --out <file>      default: <runs>/ledger.html
+  --out <file>      default: <runs>/ledger.html (rewritten with links after every run:
+                    use --out to keep a page you mean to share)
   --title <text>    default: "<project> QA ledger"
   --notes <file.md> add your own panels ("## What changed", "## Still open"…)
   --links           link screenshots instead of embedding them (smaller, local only)
+  --open            open the page in the browser
 `
 
 function parseFlags(argv) {
@@ -60,7 +69,7 @@ function parseFlags(argv) {
     const a = argv[i]
     if (!a.startsWith('--')) { flags._.push(a); continue }
     const key = a.slice(2)
-    if (['all', 'no-review', 'headed', 'links', 'help', 'no-auth', 'latest', 'unreviewed', 'fresh-sign-in'].includes(key)) flags[key] = true
+    if (['all', 'no-review', 'headed', 'links', 'help', 'no-auth', 'latest', 'unreviewed', 'fresh-sign-in', 'open'].includes(key)) flags[key] = true
     else if (['base', 'base-url', 'max-turns', 'out', 'title', 'notes', 'preset', 'review-concurrency'].includes(key)) flags[key] = argv[++i]
     else throw new Error(`Unknown option ${a}`)
   }
@@ -105,6 +114,16 @@ function reviewConcurrency(flags) {
 
 function projectName(root) {
   try { return JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).name || basename(root) } catch { return basename(root) }
+}
+
+const ledgerTitle = config => `${projectName(config.root)} QA ledger`
+
+/** After run and review: refresh the ledger, print where to look, open it on --open. Never changes the exit code. */
+async function showResults(config, results, flags) {
+  const ledger = await refreshLedger(config, ledgerTitle(config))
+  const links = resultLinks(ledger, results)
+  if (links) console.log(links)
+  if (flags.open && ledger) openInBrowser(ledger)
 }
 
 async function main() {
@@ -176,6 +195,7 @@ async function main() {
         maxTurns: flags['max-turns'] ? Number(flags['max-turns']) : undefined,
         freshSignIn: Boolean(flags['fresh-sign-in']), reviewConcurrency: concurrency,
       })
+      await showResults(config, results, flags)
       return results.every(r => r.result === 'pass') ? 0 : 1
     }
     case 'review': {
@@ -188,16 +208,27 @@ async function main() {
         throw new Error('Name run folders, or pass --latest or --unreviewed')
       }
       const results = await reviewRuns(dirs, config, { reviewConcurrency: concurrency })
+      await showResults(config, results, flags)
       return results.every(r => r.result === 'pass') ? 0 : 1
     }
     case 'ledger': {
       const config = project()
       const { outFile, bytes } = await writeLedger(config, {
-        title: flags.title ?? `${projectName(config.root)} QA ledger`,
+        title: flags.title ?? ledgerTitle(config),
         notesFile: flags.notes, links: Boolean(flags.links), out: flags.out,
       })
       console.log(`Ledger → ${relative(process.cwd(), outFile)} (${(bytes / 1024 / 1024).toFixed(1)} MB)`)
+      if (flags.open) openInBrowser(outFile)
       return 0
+    }
+    case 'open': {
+      const config = project()
+      if (flags._.length > 1) throw new Error('Name one spec id or run folder, or nothing to open the ledger')
+      const page = pageFor(config, flags._[0])
+      // Runs from before the ledger was refreshed automatically: build it once.
+      if (!flags._[0] && !existsSync(page)) await refreshLedger(config, ledgerTitle(config))
+      console.log(`Opening ${relative(process.cwd(), page)}`)
+      return openInBrowser(page) ? 0 : 1
     }
     default:
       throw new Error(`Unknown command "${command}". Run "affidavit help".`)
