@@ -106,6 +106,7 @@ npx affidavit run --all                # every spec
 npx affidavit run <id> --no-review     # screenshots only, while iterating
 npx affidavit review --unreviewed      # review runs left without a verdict (rate limit, --no-review)
 npx affidavit ledger                   # one page: every spec, latest result, history
+npx affidavit open [id]                # open the ledger, or a spec's latest report, in the browser
 ```
 
 Reviews run alongside the browser, so a suite takes about as long as its
@@ -135,6 +136,10 @@ reviewer can be wrong.
   not a result either way.
 
 Report the result, the report path, and every defect with the step it appeared
-in. Do not describe a flow as working when its QA run did not pass. When asked
+in. The last lines of `run` and `review` output (`Results  file://…`) are links
+to the refreshed ledger and to each report that did not pass: give the person
+those `file://` links as they are, so they can click through instead of
+browsing folders. When they ask to see the results, run `npx affidavit open`
+(or `open <id>` for one spec). Do not describe a flow as working when its QA run did not pass. When asked
 for an overview, run `npx affidavit ledger` (`--notes <file.md>` adds your own
 "what changed / still open" panels) and share that page.

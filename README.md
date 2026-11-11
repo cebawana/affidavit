@@ -53,8 +53,7 @@ npm i -D affidavit                  # or straight from GitHub: npm i -D github:c
 npx affidavit init --no-auth        # config, example spec, Claude Code skill
 npm run dev                         # start the app (in another terminal)
 npx affidavit doctor                # browser, reviewer, server: shows the page title it found
-npx affidavit run --all
-npx affidavit ledger                # one page for everything
+npx affidavit run --all --open      # runs, then opens the page with every result
 ```
 
 That is the whole setup for an app without a sign-in: no credentials, no
@@ -79,14 +78,21 @@ machine: run `npx affidavit …` from the project root.
 | `init [--no-auth] [--preset next\|vite\|none] [--base-url <url>]` | Writes `affidavit.config.json`, `qa/specs/_example.qa.md`, the skill in `.claude/skills/affidavit/`, and gitignore lines; with a sign-in, also `.env.qa.example`. Asks "Does the app need a sign-in?" in a terminal; `--no-auth` answers for scripts and agents. Never overwrites a file. |
 | `doctor` | Checks the browser, the reviewer backend, the roles your specs sign in as, and that the app answers: it shows the final URL and page title, so the wrong app on the port is obvious. |
 | `check [spec…]` | Parses specs without running them; reports every problem at once, with a "did you mean" for an action or front-matter key it cannot read. |
-| `run <spec…> \| --all` | Runs specs by path or id. The browser captures one spec after another; reviews run from a queue alongside it. `--no-review` (screenshots only), `--headed`, `--base <url>`, `--max-turns <n>`, `--review-concurrency <n>`, `--fresh-sign-in`. Exits non-zero unless every spec passes. |
-| `review <run…> \| --latest \| --unreviewed` | Reviews runs that already exist, without the browser: after a rate limit or a timeout, with another backend or model, or a whole suite captured with `--no-review`. `--latest` is every spec's latest run; `--unreviewed` every run without a verdict. Rewrites `report.html` and `result.json`; the screenshots are untouched. |
-| `ledger` | Builds one page with every spec's latest result, history, reviewer findings and screenshots (embedded, compressed). `--notes notes.md` adds your own panels; `--links` links screenshots instead; `--out`, `--title`. |
+| `run <spec…> \| --all` | Runs specs by path or id. The browser captures one spec after another; reviews run from a queue alongside it. `--no-review` (screenshots only), `--headed`, `--base <url>`, `--max-turns <n>`, `--review-concurrency <n>`, `--fresh-sign-in`, `--open`. Exits non-zero unless every spec passes. |
+| `review <run…> \| --latest \| --unreviewed` | Reviews runs that already exist, without the browser: after a rate limit or a timeout, with another backend or model, or a whole suite captured with `--no-review`. `--latest` is every spec's latest run; `--unreviewed` every run without a verdict. Rewrites `report.html` and `result.json`; the screenshots are untouched. `--open`. |
+| `ledger` | Builds one page with every spec's latest result, history, reviewer findings and screenshots (embedded, compressed). `--notes notes.md` adds your own panels; `--links` links screenshots instead; `--out`, `--title`, `--open`. |
+| `open [spec-id \| run]` | Opens the ledger in your browser; with a spec id, that spec's latest `report.html`; with a run folder, its report. |
 
 Each run writes `qa/runs/<time>-<id>/` with `report.html`, `result.json` and
 one `step-NN.png` per step. `result.json` carries the verdict, the spec's
 criteria as they were at capture time, and `timings` (`browserMs`, `queuedMs`,
 `reviewMs`), so a run can be reviewed again later and the time split measured.
+
+After `run` and `review`, `qa/runs/ledger.html` is refreshed with linked
+screenshots, and the last lines of output are a `file://` link to it and to the
+report of each run that did not pass (Cmd/Ctrl-click to open). Bookmark that
+page once and it always shows the latest state. To keep a ledger you mean to
+share, write it elsewhere: `affidavit ledger --out qa/ledger-2026-11-11.html`.
 
 ### Fast suites
 

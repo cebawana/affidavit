@@ -5,7 +5,7 @@ Source of truth is GitHub; this file is a readable view of it.
 
 Legend: ✅ done · 🔀 PR open · ⬜ open · 📊 measurement
 
-## 1. Reliable & fast — 11 done / 11 open
+## 1. Reliable & fast — 11 done / 12 open
 
 The runner acts on what it sees, waits the right amount, and suites finish quickly.
 
@@ -35,6 +35,9 @@ The runner acts on what it sees, waits the right amount, and suites finish quick
 - ⬜ #4 `## Cleanup` steps that always run
 - ⬜ #14 New actions: hover, type, drag, horizontal scroll (upload split into #43)
 - ⬜ #15 Full-page capture and sideways-overflow notes
+
+**Seeing results**
+- 🔀 #50 See results without Finder: the ledger refreshed after every run, clickable links, `affidavit open` (0.7.1)
 
 **Auth**
 - ⬜ #17 `affidavit login <role>`: sign in by hand once (OAuth, SSO, magic links, 2FA)
@@ -71,12 +74,13 @@ Good enough to show strangers: proof, CI, sharing, polish.
 - ⬜ #21 `affidavit record`: write a spec by clicking through a flow
 - ⬜ #23 Claude Code plugin package
 
-## 4. Later (after 1.0) — 4 open
+## 4. Later (after 1.0) — 5 open
 
 - ⬜ #22 `affidavit new`: scaffold a spec
 - ⬜ #24 Firefox and WebKit
 - ⬜ #26 Documentation site
 - ⬜ #27 Native mobile apps through simulators
+- ⬜ #51 `affidavit serve`: a local live viewer for runs
 
 ## Next up
 
